@@ -1,0 +1,381 @@
+"use client";
+
+import { useState, useCallback, useRef } from "react";
+
+// ── 出力設定 ──────────────────────────────────────────
+const OUTPUT_W = 800;
+const OUTPUT_H = 1200;
+const BOTTLE_MAX_H_RATIO = 0.82; // キャンバス高さに対する酒瓶最大高さ
+const BOTTLE_MAX_W_RATIO = 0.55; // キャンバス幅に対する酒瓶最大幅
+const BOTTLE_CENTER_Y    = 0.46; // 瓶の中心を置くY位置（比率）
+
+// ── 型 ────────────────────────────────────────────────
+type ImageItem = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: "waiting" | "processing" | "done" | "error";
+  resultUrl?: string;
+  errorMessage?: string;
+};
+
+// ── 透明ピクセルを除いたバウンディングボックスを取得 ──
+function getBoundingBox(imageData: ImageData) {
+  const { data, width, height } = imageData;
+  let minX = width, minY = height, maxX = 0, maxY = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const a = data[(y * width + x) * 4 + 3];
+      if (a > 15) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+// ── 高級感ある背景を描画 ─────────────────────────────
+function drawLuxuryBackground(ctx: CanvasRenderingContext2D) {
+  const w = OUTPUT_W, h = OUTPUT_H;
+
+  // 1. ベース: 白
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, w, h);
+
+  // 2. 中央からの柔らかいグラデーション（純白→薄いグレー）
+  const spotlight = ctx.createRadialGradient(w / 2, h * 0.4, 0, w / 2, h * 0.4, w * 0.9);
+  spotlight.addColorStop(0,   "rgba(255,255,255,1)");
+  spotlight.addColorStop(0.6, "rgba(245,245,245,1)");
+  spotlight.addColorStop(1,   "rgba(230,230,230,1)");
+  ctx.fillStyle = spotlight;
+  ctx.fillRect(0, 0, w, h);
+
+  // 3. 四隅ビネット（淡いグレー）
+  const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.3, w / 2, h / 2, h * 0.85);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.08)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
+
+  // 4. 床面の微細なグロー（下部）
+  const floor = ctx.createLinearGradient(0, h * 0.72, 0, h);
+  floor.addColorStop(0, "rgba(0,0,0,0)");
+  floor.addColorStop(1, "rgba(200,200,200,0.2)");
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, 0, w, h);
+}
+
+// ── 床面リフレクションを描画 ─────────────────────────
+function drawReflection(
+  ctx: CanvasRenderingContext2D,
+  src: HTMLImageElement,
+  sx: number, sy: number, sw: number, sh: number,
+  dx: number, dy: number, dw: number, dh: number
+) {
+  const reflH = dh * 0.28;
+  const reflY = dy + dh;
+
+  ctx.save();
+  ctx.translate(0, reflY * 2 + reflH);
+  ctx.scale(1, -1);
+  ctx.drawImage(src, sx, sy, sw, sh, dx, reflY, dw, reflH);
+  ctx.restore();
+
+  // フェードアウト（白背景に溶け込ませる）
+  const fade = ctx.createLinearGradient(0, reflY, 0, reflY + reflH);
+  fade.addColorStop(0,   "rgba(255,255,255,0.5)");
+  fade.addColorStop(0.6, "rgba(255,255,255,0.85)");
+  fade.addColorStop(1,   "rgba(255,255,255,1)");
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, reflY, OUTPUT_W, reflH);
+}
+
+// ── 画像1枚を処理 ────────────────────────────────────
+async function processImage(item: ImageItem): Promise<string> {
+  const { removeBackground } = await import("@imgly/background-removal");
+
+  // 背景除去（publicPath はライブラリのデフォルト = staticimgly.com を使用）
+  const blob = await removeBackground(item.file);
+
+  // 透明PNG → HTMLImageElement
+  const transparentUrl = URL.createObjectURL(blob);
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = rej;
+    i.src = transparentUrl;
+  });
+
+  // バウンディングボックス検出
+  const tmpCanvas = document.createElement("canvas");
+  tmpCanvas.width  = img.naturalWidth;
+  tmpCanvas.height = img.naturalHeight;
+  const tmpCtx = tmpCanvas.getContext("2d")!;
+  tmpCtx.drawImage(img, 0, 0);
+  const { minX, minY, maxX, maxY } = getBoundingBox(
+    tmpCtx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height)
+  );
+
+  URL.revokeObjectURL(transparentUrl);
+
+  const bw = maxX - minX;
+  const bh = maxY - minY;
+
+  // 統一スケール計算（瓶が常に同じ大きさに）
+  const maxW = OUTPUT_W * BOTTLE_MAX_W_RATIO;
+  const maxH = OUTPUT_H * BOTTLE_MAX_H_RATIO;
+  const scale  = Math.min(maxW / bw, maxH / bh);
+  const scaledW = bw * scale;
+  const scaledH = bh * scale;
+
+  // 中央揃え（縦はやや上寄り）
+  const destX = (OUTPUT_W - scaledW) / 2;
+  const destY = OUTPUT_H * BOTTLE_CENTER_Y - scaledH / 2;
+
+  // 最終キャンバス
+  const canvas = document.createElement("canvas");
+  canvas.width  = OUTPUT_W;
+  canvas.height = OUTPUT_H;
+  const ctx = canvas.getContext("2d")!;
+
+  // 高級感ある背景
+  drawLuxuryBackground(ctx);
+
+  // 床面リフレクション（瓶の下に映り込み）
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  drawReflection(ctx, img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
+  ctx.restore();
+
+  // 瓶本体を描画
+  ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
+
+  // 瓶の下に微細な影
+  const shadowGrad = ctx.createRadialGradient(
+    OUTPUT_W / 2, destY + scaledH + 10, 0,
+    OUTPUT_W / 2, destY + scaledH + 10, scaledW * 0.55
+  );
+  shadowGrad.addColorStop(0,   "rgba(0,0,0,0.18)");
+  shadowGrad.addColorStop(1,   "rgba(0,0,0,0)");
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  ctx.fillStyle = shadowGrad;
+  ctx.ellipse(
+    OUTPUT_W / 2, destY + scaledH + 8,
+    scaledW * 0.45, 18,
+    0, 0, Math.PI * 2
+  );
+  ctx.fill();
+  ctx.restore();
+
+  return new Promise((resolve) => {
+    canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
+  });
+}
+
+// ── コンポーネント ────────────────────────────────────
+export default function Home() {
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const addFiles = useCallback((files: File[]) => {
+    const newItems: ImageItem[] = files
+      .filter((f) => f.type.startsWith("image/"))
+      .map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        status: "waiting",
+      }));
+    setImages((prev) => [...prev, ...newItems]);
+  }, []);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    addFiles(Array.from(e.dataTransfer.files));
+  };
+
+  const processAll = async () => {
+    setIsProcessing(true);
+    const waiting = images.filter((i) => i.status === "waiting");
+    for (const item of waiting) {
+      setImages((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, status: "processing" } : i))
+      );
+      try {
+        const resultUrl = await processImage(item);
+        setImages((prev) =>
+          prev.map((i) =>
+            i.id === item.id ? { ...i, status: "done", resultUrl } : i
+          )
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("processImage error:", msg);
+        setImages((prev) =>
+          prev.map((i) =>
+            i.id === item.id ? { ...i, status: "error", errorMessage: msg } : i
+          )
+        );
+      }
+    }
+    setIsProcessing(false);
+  };
+
+  const downloadAll = () => {
+    images.forEach((item) => {
+      if (item.resultUrl) {
+        const a = document.createElement("a");
+        a.href = item.resultUrl;
+        a.download = `sake_${item.file.name.replace(/\.[^.]+$/, "")}.png`;
+        a.click();
+      }
+    });
+  };
+
+  const waitingCount    = images.filter((i) => i.status === "waiting").length;
+  const doneCount       = images.filter((i) => i.status === "done").length;
+
+  return (
+    <main className="max-w-5xl mx-auto px-4 py-10">
+      {/* ヘッダー */}
+      <div className="mb-8 text-center">
+        <h1 className="text-3xl font-bold tracking-widest mb-2">🍶 SAKE VISUAL</h1>
+        <p className="text-gray-400 text-sm">
+          日本酒の瓶画像を統一されたプレミアムビジュアルに変換
+        </p>
+        <p className="text-xs text-gray-600 mt-1">
+          出力: {OUTPUT_W}×{OUTPUT_H}px 固定 / 瓶サイズ・位置を自動統一
+        </p>
+      </div>
+
+      {/* ドロップゾーン */}
+      <div
+        className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-colors mb-6
+          ${isDragging ? "border-amber-500 bg-amber-950/20" : "border-gray-700 hover:border-gray-500"}`}
+        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <div className="text-4xl mb-3">🍶</div>
+        <p className="text-gray-300">日本酒の画像をドラッグ＆ドロップ</p>
+        <p className="text-xs text-gray-500 mt-1">複数枚まとめてOK</p>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => e.target.files && addFiles(Array.from(e.target.files))}
+        />
+      </div>
+
+      {/* アクションボタン */}
+      {images.length > 0 && (
+        <div className="flex gap-3 mb-6 flex-wrap items-center">
+          {waitingCount > 0 && (
+            <button
+              onClick={processAll}
+              disabled={isProcessing}
+              className="px-6 py-2.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded-lg font-semibold transition tracking-wide"
+            >
+              {isProcessing ? "⏳ 処理中..." : `▶ 変換開始（${waitingCount}枚）`}
+            </button>
+          )}
+          {doneCount > 0 && (
+            <button
+              onClick={downloadAll}
+              className="px-6 py-2.5 bg-gray-700 hover:bg-gray-600 rounded-lg font-semibold transition"
+            >
+              ⬇ 全ダウンロード（{doneCount}枚）
+            </button>
+          )}
+          <button
+            onClick={() => setImages([])}
+            className="px-4 py-2.5 text-gray-500 hover:text-gray-300 rounded-lg transition ml-auto text-sm"
+          >
+            クリア
+          </button>
+        </div>
+      )}
+
+      {/* 画像グリッド */}
+      {images.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          {images.map((item) => (
+            <div key={item.id} className="rounded-xl overflow-hidden bg-gray-900 border border-gray-800 relative group">
+              {/* 削除ボタン */}
+              <button
+                onClick={() => setImages((p) => p.filter((i) => i.id !== item.id))}
+                className="absolute top-2 right-2 z-10 bg-black/70 hover:bg-red-700 rounded-full w-6 h-6 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+              >✕</button>
+
+              {/* プレビュー */}
+              <div className="aspect-[2/3] relative bg-black">
+                <img
+                  src={item.previewUrl}
+                  alt={item.file.name}
+                  className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500
+                    ${item.status === "done" ? "opacity-0" : "opacity-100"}`}
+                />
+                {item.resultUrl && (
+                  <img
+                    src={item.resultUrl}
+                    alt="変換後"
+                    className="absolute inset-0 w-full h-full object-contain"
+                  />
+                )}
+                {item.status === "processing" && (
+                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-2">
+                    <div className="w-7 h-7 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs text-amber-300">変換中</span>
+                  </div>
+                )}
+                {item.status === "error" && (
+                  <div className="absolute inset-0 bg-red-900/70 flex items-center justify-center p-2">
+                    <span className="text-xs text-red-200 text-center break-all line-clamp-4">
+                      {item.errorMessage ?? "エラー"}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* 下部情報 */}
+              <div className="px-2 py-2 flex items-center justify-between">
+                <span className={`text-xs px-2 py-0.5 rounded-full
+                  ${item.status === "waiting"    ? "bg-gray-700 text-gray-300" : ""}
+                  ${item.status === "processing" ? "bg-amber-800 text-amber-200" : ""}
+                  ${item.status === "done"       ? "bg-green-900 text-green-300" : ""}
+                  ${item.status === "error"      ? "bg-red-900 text-red-300" : ""}
+                `}>
+                  {item.status === "waiting"    && "待機"}
+                  {item.status === "processing" && "変換中"}
+                  {item.status === "done"       && "完了"}
+                  {item.status === "error"      && "エラー"}
+                </span>
+                {item.resultUrl && (
+                  <a
+                    href={item.resultUrl}
+                    download={`sake_${item.file.name.replace(/\.[^.]+$/, "")}.png`}
+                    className="text-xs text-amber-500 hover:text-amber-300 transition"
+                  >DL</a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {images.length === 0 && (
+        <p className="text-center text-gray-700 mt-12 text-sm">画像を追加してください</p>
+      )}
+    </main>
+  );
+}
