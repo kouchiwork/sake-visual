@@ -37,96 +37,96 @@ function getBoundingBox(imageData: ImageData) {
   return { minX, minY, maxX, maxY };
 }
 
-// ── スタジオ背景（壁と床の境目あり・光源は左上）────
+// ── スタジオ背景
+// seamY = 瓶の底位置。壁→床の色変化をここを基準に配置する。
+// 実際のスイープ紙は「ライン」ではなくグラデーションで変化する。
 function drawStudioBackground(ctx: CanvasRenderingContext2D, seamY: number) {
   const w = OUTPUT_W, h = OUTPUT_H;
 
-  // 1. 壁面ベース（明るいクールグレー）
-  ctx.fillStyle = "#c8cace";
+  // 1. ベース（参考画像の壁面グレー）
+  ctx.fillStyle = "#bfc2c7";
   ctx.fillRect(0, 0, w, h);
 
-  // 2. 上方左寄りのソフトボックス光源
-  const softbox = ctx.createRadialGradient(w * 0.38, h * 0.18, 0, w * 0.42, h * 0.22, w * 1.0);
-  softbox.addColorStop(0,    "rgba(255,255,255,0.48)");
-  softbox.addColorStop(0.28, "rgba(255,255,255,0.20)");
-  softbox.addColorStop(0.6,  "rgba(255,255,255,0.05)");
+  // 2. ソフトボックス（左上から大きく広がる拡散光）
+  //    中心を左上寄りにすることで自然なライティング感
+  const softbox = ctx.createRadialGradient(
+    w * 0.40, h * 0.12, 0,
+    w * 0.40, h * 0.12, w * 1.15
+  );
+  softbox.addColorStop(0,    "rgba(255,255,255,0.55)");
+  softbox.addColorStop(0.22, "rgba(255,255,255,0.28)");
+  softbox.addColorStop(0.50, "rgba(255,255,255,0.08)");
+  softbox.addColorStop(0.80, "rgba(255,255,255,0.01)");
   softbox.addColorStop(1,    "rgba(255,255,255,0)");
   ctx.fillStyle = softbox;
   ctx.fillRect(0, 0, w, h);
 
-  // 3. 床面（seamY 以降を暗めに塗る）
-  const floorGrad = ctx.createLinearGradient(0, seamY - 20, 0, h);
-  floorGrad.addColorStop(0,   "rgba(0,0,0,0)");
-  floorGrad.addColorStop(0.12, "rgba(0,0,0,0.09)");
-  floorGrad.addColorStop(0.5,  "rgba(0,0,0,0.14)");
-  floorGrad.addColorStop(1,    "rgba(0,0,0,0.20)");
-  ctx.fillStyle = floorGrad;
-  ctx.fillRect(0, seamY - 20, w, h - (seamY - 20));
+  // 3. 床面の暗化（スイープ紙カーブ）
+  //    seamY の少し上から始まり、下に向かって徐々に暗くなる。
+  //    これだけで「壁と床の別れ目」が自然に見える。
+  const transStart = seamY - h * 0.18;
+  const floor = ctx.createLinearGradient(0, transStart, 0, h);
+  floor.addColorStop(0,    "rgba(0,0,0,0)");
+  floor.addColorStop(0.20, "rgba(0,0,0,0.07)");
+  floor.addColorStop(0.50, "rgba(0,0,0,0.15)");
+  floor.addColorStop(1,    "rgba(0,0,0,0.22)");
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, transStart, w, h - transStart);
 
-  // 4. 壁と床の境目ライン（subtle な暗い帯）
-  const seam = ctx.createLinearGradient(0, seamY - 18, 0, seamY + 22);
-  seam.addColorStop(0,    "rgba(0,0,0,0)");
-  seam.addColorStop(0.45, "rgba(0,0,0,0.13)");
-  seam.addColorStop(0.55, "rgba(0,0,0,0.13)");
-  seam.addColorStop(1,    "rgba(0,0,0,0)");
-  ctx.fillStyle = seam;
-  ctx.fillRect(0, seamY - 18, w, 40);
-
-  // 5. 左右端の自然なシェーディング
-  const sideL = ctx.createLinearGradient(0, 0, w * 0.28, 0);
-  sideL.addColorStop(0, "rgba(0,0,0,0.11)");
+  // 4. 左右端の軽いシェーディング（スタジオの壁が画面端で暗くなる）
+  const sideL = ctx.createLinearGradient(0, 0, w * 0.25, 0);
+  sideL.addColorStop(0, "rgba(0,0,0,0.10)");
   sideL.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideL;
   ctx.fillRect(0, 0, w, h);
 
-  const sideR = ctx.createLinearGradient(w, 0, w * 0.72, 0);
-  sideR.addColorStop(0, "rgba(0,0,0,0.08)");
+  const sideR = ctx.createLinearGradient(w, 0, w * 0.75, 0);
+  sideR.addColorStop(0, "rgba(0,0,0,0.07)");
   sideR.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideR;
   ctx.fillRect(0, 0, w, h);
 }
 
-// ── 影（接地＋右へ伸びる斜めキャストシャドウ）────────
+// ── 影（楕円変形で自然なキャストシャドウ）
+// 台形パスを使わず、canvas の scale 変換で楕円を横に引き伸ばす。
+// これが実際のスタジオ写真の影に最も近い表現。
 function drawShadow(
   ctx: CanvasRenderingContext2D,
   centerX: number, seamY: number, scaledW: number
 ) {
-  // 接地影（瓶底の直下）
+  // ── 1. 接地影（瓶底直下・タイト）
   ctx.save();
-  ctx.filter = "blur(5px)";
-  const contact = ctx.createRadialGradient(centerX, seamY, 0, centerX, seamY, scaledW * 0.32);
-  contact.addColorStop(0,   "rgba(0,0,0,0.38)");
+  ctx.translate(centerX, seamY);
+  ctx.scale(1, 0.18);
+  ctx.filter = "blur(4px)";
+  const contact = ctx.createRadialGradient(0, 0, 0, 0, 0, scaledW * 0.30);
+  contact.addColorStop(0,   "rgba(0,0,0,0.55)");
+  contact.addColorStop(0.5, "rgba(0,0,0,0.25)");
   contact.addColorStop(1,   "rgba(0,0,0,0)");
   ctx.fillStyle = contact;
-  ctx.fillRect(centerX - scaledW * 0.4, seamY - 6, scaledW * 0.8, scaledW * 0.25);
+  ctx.beginPath();
+  ctx.arc(0, 0, scaledW * 0.30, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 
-  // キャストシャドウ（右方向へ伸びる）
-  // 光源が左上なので影は右下へ
-  const shadowLen = scaledW * 2.2;
-  const shadowOffX = scaledW * 0.18; // 右にオフセット
+  // ── 2. キャストシャドウ（右方向へ伸びる・拡散）
+  //    原点を瓶底に置き、X方向に大きく引き伸ばし、右にオフセット
+  const castOffX = scaledW * 0.55;   // 右へのオフセット
+  const castScaleX = 2.8;            // 横への引き伸ばし倍率
+  const castScaleY = 0.12;           // 縦の圧縮（床に寝た楕円）
+
   ctx.save();
-  ctx.filter = "blur(14px)";
-
-  // 瓶の幅で始まり、先端に向かって細くなる台形パス
-  const x0 = centerX - scaledW * 0.22;
-  const x1 = centerX + scaledW * 0.22;
-  const tx = centerX + shadowLen + shadowOffX;
-  const ty = seamY + scaledW * 0.18;
-
+  ctx.translate(centerX + castOffX, seamY + 2);
+  ctx.scale(castScaleX, castScaleY);
+  ctx.filter = "blur(18px)";
+  const cast = ctx.createRadialGradient(0, 0, 0, 0, 0, scaledW * 0.45);
+  cast.addColorStop(0,    "rgba(0,0,0,0.38)");
+  cast.addColorStop(0.40, "rgba(0,0,0,0.18)");
+  cast.addColorStop(0.75, "rgba(0,0,0,0.06)");
+  cast.addColorStop(1,    "rgba(0,0,0,0)");
+  ctx.fillStyle = cast;
   ctx.beginPath();
-  ctx.moveTo(x0, seamY);
-  ctx.lineTo(x1, seamY);
-  ctx.lineTo(tx + scaledW * 0.1, ty);
-  ctx.lineTo(tx - scaledW * 0.05, ty);
-  ctx.closePath();
-
-  const castGrad = ctx.createLinearGradient(centerX, seamY, tx, ty);
-  castGrad.addColorStop(0,   "rgba(0,0,0,0.32)");
-  castGrad.addColorStop(0.35, "rgba(0,0,0,0.14)");
-  castGrad.addColorStop(0.7, "rgba(0,0,0,0.05)");
-  castGrad.addColorStop(1,   "rgba(0,0,0,0)");
-  ctx.fillStyle = castGrad;
+  ctx.arc(0, 0, scaledW * 0.45, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
