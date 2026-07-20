@@ -4,10 +4,10 @@ import { useState, useCallback, useRef } from "react";
 
 // ── 出力設定 ──────────────────────────────────────────
 const OUTPUT_W = 800;
-const OUTPUT_H = 1200;
-const BOTTLE_MAX_H_RATIO = 0.82; // キャンバス高さに対する酒瓶最大高さ
-const BOTTLE_MAX_W_RATIO = 0.55; // キャンバス幅に対する酒瓶最大幅
-const BOTTLE_CENTER_Y    = 0.46; // 瓶の中心を置くY位置（比率）
+const OUTPUT_H = 1000;
+const BOTTLE_MAX_H_RATIO = 0.80; // 参考画像に合わせた高さ比率
+const BOTTLE_MAX_W_RATIO = 0.48; // 参考画像に合わせた幅比率
+const BOTTLE_BOTTOM_Y    = 0.84; // 瓶の底を置くY位置（比率）
 
 // ── 型 ────────────────────────────────────────────────
 type ImageItem = {
@@ -37,34 +37,35 @@ function getBoundingBox(imageData: ImageData) {
   return { minX, minY, maxX, maxY };
 }
 
-// ── 高級感ある背景を描画 ─────────────────────────────
+// ── スタジオ背景を描画（参考画像に合わせたグレートーン）──
 function drawLuxuryBackground(ctx: CanvasRenderingContext2D) {
   const w = OUTPUT_W, h = OUTPUT_H;
 
-  // 1. ベース: 白
-  ctx.fillStyle = "#ffffff";
+  // 1. ベース: ミッドグレー
+  ctx.fillStyle = "#d4d4d4";
   ctx.fillRect(0, 0, w, h);
 
-  // 2. 中央からの柔らかいグラデーション（純白→薄いグレー）
-  const spotlight = ctx.createRadialGradient(w / 2, h * 0.4, 0, w / 2, h * 0.4, w * 0.9);
-  spotlight.addColorStop(0,   "rgba(255,255,255,1)");
-  spotlight.addColorStop(0.6, "rgba(245,245,245,1)");
-  spotlight.addColorStop(1,   "rgba(230,230,230,1)");
-  ctx.fillStyle = spotlight;
+  // 2. 中央からの明るいスポット（スタジオライト風）
+  const spot = ctx.createRadialGradient(w / 2, h * 0.38, 0, w / 2, h * 0.38, w * 0.88);
+  spot.addColorStop(0,    "#efefef");
+  spot.addColorStop(0.45, "#e0e0e0");
+  spot.addColorStop(0.75, "#ccc");
+  spot.addColorStop(1,    "#b8b8b8");
+  ctx.fillStyle = spot;
   ctx.fillRect(0, 0, w, h);
 
-  // 3. 四隅ビネット（淡いグレー）
-  const vignette = ctx.createRadialGradient(w / 2, h / 2, h * 0.3, w / 2, h / 2, h * 0.85);
-  vignette.addColorStop(0, "rgba(0,0,0,0)");
-  vignette.addColorStop(1, "rgba(0,0,0,0.08)");
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, w, h);
-
-  // 4. 床面の微細なグロー（下部）
-  const floor = ctx.createLinearGradient(0, h * 0.72, 0, h);
+  // 3. 床面グラデーション（下部をわずかに暗く）
+  const floor = ctx.createLinearGradient(0, h * 0.70, 0, h);
   floor.addColorStop(0, "rgba(0,0,0,0)");
-  floor.addColorStop(1, "rgba(200,200,200,0.2)");
+  floor.addColorStop(1, "rgba(0,0,0,0.10)");
   ctx.fillStyle = floor;
+  ctx.fillRect(0, 0, w, h);
+
+  // 4. 四隅のごく薄いビネット
+  const vign = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.82);
+  vign.addColorStop(0, "rgba(0,0,0,0)");
+  vign.addColorStop(1, "rgba(0,0,0,0.12)");
+  ctx.fillStyle = vign;
   ctx.fillRect(0, 0, w, h);
 }
 
@@ -84,11 +85,11 @@ function drawReflection(
   ctx.drawImage(src, sx, sy, sw, sh, dx, reflY, dw, reflH);
   ctx.restore();
 
-  // フェードアウト（白背景に溶け込ませる）
+  // フェードアウト（グレー背景に溶け込ませる）
   const fade = ctx.createLinearGradient(0, reflY, 0, reflY + reflH);
-  fade.addColorStop(0,   "rgba(255,255,255,0.5)");
-  fade.addColorStop(0.6, "rgba(255,255,255,0.85)");
-  fade.addColorStop(1,   "rgba(255,255,255,1)");
+  fade.addColorStop(0,   "rgba(210,210,210,0.5)");
+  fade.addColorStop(0.5, "rgba(210,210,210,0.85)");
+  fade.addColorStop(1,   "rgba(210,210,210,1)");
   ctx.fillStyle = fade;
   ctx.fillRect(0, reflY, OUTPUT_W, reflH);
 }
@@ -131,9 +132,9 @@ async function processImage(item: ImageItem): Promise<string> {
   const scaledW = bw * scale;
   const scaledH = bh * scale;
 
-  // 中央揃え（縦はやや上寄り）
+  // 瓶の底を BOTTLE_BOTTOM_Y に固定（参考画像の位置に統一）
   const destX = (OUTPUT_W - scaledW) / 2;
-  const destY = OUTPUT_H * BOTTLE_CENTER_Y - scaledH / 2;
+  const destY = OUTPUT_H * BOTTLE_BOTTOM_Y - scaledH;
 
   // 最終キャンバス
   const canvas = document.createElement("canvas");
@@ -158,14 +159,15 @@ async function processImage(item: ImageItem): Promise<string> {
     OUTPUT_W / 2, destY + scaledH + 10, 0,
     OUTPUT_W / 2, destY + scaledH + 10, scaledW * 0.55
   );
-  shadowGrad.addColorStop(0,   "rgba(0,0,0,0.18)");
+  shadowGrad.addColorStop(0,   "rgba(0,0,0,0.28)");
   shadowGrad.addColorStop(1,   "rgba(0,0,0,0)");
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
   ctx.fillStyle = shadowGrad;
+  ctx.beginPath();
   ctx.ellipse(
-    OUTPUT_W / 2, destY + scaledH + 8,
-    scaledW * 0.45, 18,
+    OUTPUT_W / 2, destY + scaledH + 6,
+    scaledW * 0.42, 14,
     0, 0, Math.PI * 2
   );
   ctx.fill();
