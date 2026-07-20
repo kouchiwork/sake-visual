@@ -145,12 +145,6 @@ async function processImage(item: ImageItem): Promise<string> {
   // 高級感ある背景
   drawLuxuryBackground(ctx);
 
-  // 床面リフレクション（瓶の下に映り込み）
-  ctx.save();
-  ctx.globalAlpha = 0.22;
-  drawReflection(ctx, img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
-  ctx.restore();
-
   // 瓶本体を描画
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
