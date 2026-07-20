@@ -37,72 +37,98 @@ function getBoundingBox(imageData: ImageData) {
   return { minX, minY, maxX, maxY };
 }
 
-// ── スタジオ背景（スイープ紙＋ソフトボックス再現）────
-function drawLuxuryBackground(ctx: CanvasRenderingContext2D) {
+// ── スタジオ背景（壁と床の境目あり・光源は左上）────
+function drawStudioBackground(ctx: CanvasRenderingContext2D, seamY: number) {
   const w = OUTPUT_W, h = OUTPUT_H;
 
-  // 1. ベース: 参考画像のグレー（#d8d8d8 相当）
-  ctx.fillStyle = "#d8d8d8";
+  // 1. 壁面ベース（明るいクールグレー）
+  ctx.fillStyle = "#c8cace";
   ctx.fillRect(0, 0, w, h);
 
-  // 2. ソフトボックスのホットスポット（上方やや左から）
-  const softbox = ctx.createRadialGradient(
-    w * 0.48, h * 0.28, 0,
-    w * 0.48, h * 0.28, w * 1.05
-  );
-  softbox.addColorStop(0,    "rgba(255,255,255,0.52)");
-  softbox.addColorStop(0.3,  "rgba(255,255,255,0.22)");
-  softbox.addColorStop(0.65, "rgba(255,255,255,0.04)");
+  // 2. 上方左寄りのソフトボックス光源
+  const softbox = ctx.createRadialGradient(w * 0.38, h * 0.18, 0, w * 0.42, h * 0.22, w * 1.0);
+  softbox.addColorStop(0,    "rgba(255,255,255,0.48)");
+  softbox.addColorStop(0.28, "rgba(255,255,255,0.20)");
+  softbox.addColorStop(0.6,  "rgba(255,255,255,0.05)");
   softbox.addColorStop(1,    "rgba(255,255,255,0)");
   ctx.fillStyle = softbox;
   ctx.fillRect(0, 0, w, h);
 
-  // 3. スイープ紙の床面カーブ（壁→床に向かって暗くなる）
-  //    参考画像では下1/3が少し暗め
-  const sweep = ctx.createLinearGradient(0, h * 0.58, 0, h);
-  sweep.addColorStop(0,   "rgba(0,0,0,0)");
-  sweep.addColorStop(0.5, "rgba(0,0,0,0.06)");
-  sweep.addColorStop(1,   "rgba(0,0,0,0.14)");
-  ctx.fillStyle = sweep;
-  ctx.fillRect(0, 0, w, h);
+  // 3. 床面（seamY 以降を暗めに塗る）
+  const floorGrad = ctx.createLinearGradient(0, seamY - 20, 0, h);
+  floorGrad.addColorStop(0,   "rgba(0,0,0,0)");
+  floorGrad.addColorStop(0.12, "rgba(0,0,0,0.09)");
+  floorGrad.addColorStop(0.5,  "rgba(0,0,0,0.14)");
+  floorGrad.addColorStop(1,    "rgba(0,0,0,0.20)");
+  ctx.fillStyle = floorGrad;
+  ctx.fillRect(0, seamY - 20, w, h - (seamY - 20));
 
-  // 4. 左右端の自然なシェーディング（スタジオ壁の反射落ち）
-  const sideL = ctx.createLinearGradient(0, 0, w * 0.3, 0);
-  sideL.addColorStop(0, "rgba(0,0,0,0.09)");
+  // 4. 壁と床の境目ライン（subtle な暗い帯）
+  const seam = ctx.createLinearGradient(0, seamY - 18, 0, seamY + 22);
+  seam.addColorStop(0,    "rgba(0,0,0,0)");
+  seam.addColorStop(0.45, "rgba(0,0,0,0.13)");
+  seam.addColorStop(0.55, "rgba(0,0,0,0.13)");
+  seam.addColorStop(1,    "rgba(0,0,0,0)");
+  ctx.fillStyle = seam;
+  ctx.fillRect(0, seamY - 18, w, 40);
+
+  // 5. 左右端の自然なシェーディング
+  const sideL = ctx.createLinearGradient(0, 0, w * 0.28, 0);
+  sideL.addColorStop(0, "rgba(0,0,0,0.11)");
   sideL.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideL;
   ctx.fillRect(0, 0, w, h);
 
-  const sideR = ctx.createLinearGradient(w, 0, w * 0.7, 0);
-  sideR.addColorStop(0, "rgba(0,0,0,0.07)");
+  const sideR = ctx.createLinearGradient(w, 0, w * 0.72, 0);
+  sideR.addColorStop(0, "rgba(0,0,0,0.08)");
   sideR.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideR;
   ctx.fillRect(0, 0, w, h);
 }
 
-// ── 床面リフレクションを描画 ─────────────────────────
-function drawReflection(
+// ── 影（接地＋右へ伸びる斜めキャストシャドウ）────────
+function drawShadow(
   ctx: CanvasRenderingContext2D,
-  src: HTMLImageElement,
-  sx: number, sy: number, sw: number, sh: number,
-  dx: number, dy: number, dw: number, dh: number
+  centerX: number, seamY: number, scaledW: number
 ) {
-  const reflH = dh * 0.28;
-  const reflY = dy + dh;
-
+  // 接地影（瓶底の直下）
   ctx.save();
-  ctx.translate(0, reflY * 2 + reflH);
-  ctx.scale(1, -1);
-  ctx.drawImage(src, sx, sy, sw, sh, dx, reflY, dw, reflH);
+  ctx.filter = "blur(5px)";
+  const contact = ctx.createRadialGradient(centerX, seamY, 0, centerX, seamY, scaledW * 0.32);
+  contact.addColorStop(0,   "rgba(0,0,0,0.38)");
+  contact.addColorStop(1,   "rgba(0,0,0,0)");
+  ctx.fillStyle = contact;
+  ctx.fillRect(centerX - scaledW * 0.4, seamY - 6, scaledW * 0.8, scaledW * 0.25);
   ctx.restore();
 
-  // フェードアウト（グレー背景に溶け込ませる）
-  const fade = ctx.createLinearGradient(0, reflY, 0, reflY + reflH);
-  fade.addColorStop(0,   "rgba(210,210,210,0.5)");
-  fade.addColorStop(0.5, "rgba(210,210,210,0.85)");
-  fade.addColorStop(1,   "rgba(210,210,210,1)");
-  ctx.fillStyle = fade;
-  ctx.fillRect(0, reflY, OUTPUT_W, reflH);
+  // キャストシャドウ（右方向へ伸びる）
+  // 光源が左上なので影は右下へ
+  const shadowLen = scaledW * 2.2;
+  const shadowOffX = scaledW * 0.18; // 右にオフセット
+  ctx.save();
+  ctx.filter = "blur(14px)";
+
+  // 瓶の幅で始まり、先端に向かって細くなる台形パス
+  const x0 = centerX - scaledW * 0.22;
+  const x1 = centerX + scaledW * 0.22;
+  const tx = centerX + shadowLen + shadowOffX;
+  const ty = seamY + scaledW * 0.18;
+
+  ctx.beginPath();
+  ctx.moveTo(x0, seamY);
+  ctx.lineTo(x1, seamY);
+  ctx.lineTo(tx + scaledW * 0.1, ty);
+  ctx.lineTo(tx - scaledW * 0.05, ty);
+  ctx.closePath();
+
+  const castGrad = ctx.createLinearGradient(centerX, seamY, tx, ty);
+  castGrad.addColorStop(0,   "rgba(0,0,0,0.32)");
+  castGrad.addColorStop(0.35, "rgba(0,0,0,0.14)");
+  castGrad.addColorStop(0.7, "rgba(0,0,0,0.05)");
+  castGrad.addColorStop(1,   "rgba(0,0,0,0)");
+  ctx.fillStyle = castGrad;
+  ctx.fill();
+  ctx.restore();
 }
 
 // ── 画像1枚を処理 ────────────────────────────────────
@@ -147,45 +173,23 @@ async function processImage(item: ImageItem): Promise<string> {
   const destX = (OUTPUT_W - scaledW) / 2;
   const destY = (OUTPUT_H - scaledH) / 2;
 
+  const seamY    = destY + scaledH;       // 瓶の底 = 壁と床の境目
+  const centerX  = OUTPUT_W / 2;
+
   // 最終キャンバス
   const canvas = document.createElement("canvas");
   canvas.width  = OUTPUT_W;
   canvas.height = OUTPUT_H;
   const ctx = canvas.getContext("2d")!;
 
-  // 高級感ある背景
-  drawLuxuryBackground(ctx);
+  // 背景（壁・床・境目）
+  drawStudioBackground(ctx, seamY);
 
-  // 瓶本体を描画
+  // 影（先に描いてから瓶を乗せる）
+  drawShadow(ctx, centerX, seamY, scaledW);
+
+  // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
-
-  // 接地影（スタジオ床面の自然なドロップシャドウ）
-  // 外側：広く薄いアンビエント影
-  const shadowOuter = ctx.createRadialGradient(
-    OUTPUT_W / 2, destY + scaledH,     0,
-    OUTPUT_W / 2, destY + scaledH + 4, scaledW * 0.72
-  );
-  shadowOuter.addColorStop(0,   "rgba(0,0,0,0.22)");
-  shadowOuter.addColorStop(0.5, "rgba(0,0,0,0.08)");
-  shadowOuter.addColorStop(1,   "rgba(0,0,0,0)");
-  ctx.save();
-  ctx.filter = "blur(8px)";
-  ctx.fillStyle = shadowOuter;
-  ctx.fillRect(destX - scaledW * 0.3, destY + scaledH - 10, scaledW * 1.6, scaledW * 0.5);
-  ctx.restore();
-
-  // 内側：瓶底直下のタイトな影
-  const shadowInner = ctx.createRadialGradient(
-    OUTPUT_W / 2, destY + scaledH + 2, 0,
-    OUTPUT_W / 2, destY + scaledH + 2, scaledW * 0.28
-  );
-  shadowInner.addColorStop(0,   "rgba(0,0,0,0.30)");
-  shadowInner.addColorStop(1,   "rgba(0,0,0,0)");
-  ctx.save();
-  ctx.filter = "blur(3px)";
-  ctx.fillStyle = shadowInner;
-  ctx.fillRect(destX, destY + scaledH - 4, scaledW, scaledW * 0.18);
-  ctx.restore();
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
