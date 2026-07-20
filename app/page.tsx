@@ -37,35 +37,46 @@ function getBoundingBox(imageData: ImageData) {
   return { minX, minY, maxX, maxY };
 }
 
-// ── スタジオ背景を描画（参考画像に合わせたグレートーン）──
+// ── スタジオ背景（スイープ紙＋ソフトボックス再現）────
 function drawLuxuryBackground(ctx: CanvasRenderingContext2D) {
   const w = OUTPUT_W, h = OUTPUT_H;
 
-  // 1. ベース: ミッドグレー
-  ctx.fillStyle = "#d4d4d4";
+  // 1. ベース: 参考画像のグレー（#d8d8d8 相当）
+  ctx.fillStyle = "#d8d8d8";
   ctx.fillRect(0, 0, w, h);
 
-  // 2. 中央からの明るいスポット（スタジオライト風）
-  const spot = ctx.createRadialGradient(w / 2, h * 0.38, 0, w / 2, h * 0.38, w * 0.88);
-  spot.addColorStop(0,    "#efefef");
-  spot.addColorStop(0.45, "#e0e0e0");
-  spot.addColorStop(0.75, "#ccc");
-  spot.addColorStop(1,    "#b8b8b8");
-  ctx.fillStyle = spot;
+  // 2. ソフトボックスのホットスポット（上方やや左から）
+  const softbox = ctx.createRadialGradient(
+    w * 0.48, h * 0.28, 0,
+    w * 0.48, h * 0.28, w * 1.05
+  );
+  softbox.addColorStop(0,    "rgba(255,255,255,0.52)");
+  softbox.addColorStop(0.3,  "rgba(255,255,255,0.22)");
+  softbox.addColorStop(0.65, "rgba(255,255,255,0.04)");
+  softbox.addColorStop(1,    "rgba(255,255,255,0)");
+  ctx.fillStyle = softbox;
   ctx.fillRect(0, 0, w, h);
 
-  // 3. 床面グラデーション（下部をわずかに暗く）
-  const floor = ctx.createLinearGradient(0, h * 0.70, 0, h);
-  floor.addColorStop(0, "rgba(0,0,0,0)");
-  floor.addColorStop(1, "rgba(0,0,0,0.10)");
-  ctx.fillStyle = floor;
+  // 3. スイープ紙の床面カーブ（壁→床に向かって暗くなる）
+  //    参考画像では下1/3が少し暗め
+  const sweep = ctx.createLinearGradient(0, h * 0.58, 0, h);
+  sweep.addColorStop(0,   "rgba(0,0,0,0)");
+  sweep.addColorStop(0.5, "rgba(0,0,0,0.06)");
+  sweep.addColorStop(1,   "rgba(0,0,0,0.14)");
+  ctx.fillStyle = sweep;
   ctx.fillRect(0, 0, w, h);
 
-  // 4. 四隅のごく薄いビネット
-  const vign = ctx.createRadialGradient(w / 2, h / 2, h * 0.35, w / 2, h / 2, h * 0.82);
-  vign.addColorStop(0, "rgba(0,0,0,0)");
-  vign.addColorStop(1, "rgba(0,0,0,0.12)");
-  ctx.fillStyle = vign;
+  // 4. 左右端の自然なシェーディング（スタジオ壁の反射落ち）
+  const sideL = ctx.createLinearGradient(0, 0, w * 0.3, 0);
+  sideL.addColorStop(0, "rgba(0,0,0,0.09)");
+  sideL.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = sideL;
+  ctx.fillRect(0, 0, w, h);
+
+  const sideR = ctx.createLinearGradient(w, 0, w * 0.7, 0);
+  sideR.addColorStop(0, "rgba(0,0,0,0.07)");
+  sideR.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = sideR;
   ctx.fillRect(0, 0, w, h);
 }
 
@@ -148,23 +159,32 @@ async function processImage(item: ImageItem): Promise<string> {
   // 瓶本体を描画
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
-  // 瓶の下に微細な影
-  const shadowGrad = ctx.createRadialGradient(
-    OUTPUT_W / 2, destY + scaledH + 10, 0,
-    OUTPUT_W / 2, destY + scaledH + 10, scaledW * 0.55
+  // 接地影（スタジオ床面の自然なドロップシャドウ）
+  // 外側：広く薄いアンビエント影
+  const shadowOuter = ctx.createRadialGradient(
+    OUTPUT_W / 2, destY + scaledH,     0,
+    OUTPUT_W / 2, destY + scaledH + 4, scaledW * 0.72
   );
-  shadowGrad.addColorStop(0,   "rgba(0,0,0,0.28)");
-  shadowGrad.addColorStop(1,   "rgba(0,0,0,0)");
+  shadowOuter.addColorStop(0,   "rgba(0,0,0,0.22)");
+  shadowOuter.addColorStop(0.5, "rgba(0,0,0,0.08)");
+  shadowOuter.addColorStop(1,   "rgba(0,0,0,0)");
   ctx.save();
-  ctx.globalCompositeOperation = "multiply";
-  ctx.fillStyle = shadowGrad;
-  ctx.beginPath();
-  ctx.ellipse(
-    OUTPUT_W / 2, destY + scaledH + 6,
-    scaledW * 0.42, 14,
-    0, 0, Math.PI * 2
+  ctx.filter = "blur(8px)";
+  ctx.fillStyle = shadowOuter;
+  ctx.fillRect(destX - scaledW * 0.3, destY + scaledH - 10, scaledW * 1.6, scaledW * 0.5);
+  ctx.restore();
+
+  // 内側：瓶底直下のタイトな影
+  const shadowInner = ctx.createRadialGradient(
+    OUTPUT_W / 2, destY + scaledH + 2, 0,
+    OUTPUT_W / 2, destY + scaledH + 2, scaledW * 0.28
   );
-  ctx.fill();
+  shadowInner.addColorStop(0,   "rgba(0,0,0,0.30)");
+  shadowInner.addColorStop(1,   "rgba(0,0,0,0)");
+  ctx.save();
+  ctx.filter = "blur(3px)";
+  ctx.fillStyle = shadowInner;
+  ctx.fillRect(destX, destY + scaledH - 4, scaledW, scaledW * 0.18);
   ctx.restore();
 
   return new Promise((resolve) => {
