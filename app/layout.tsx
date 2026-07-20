@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "背景を黒くするアプリ",
-  description: "画像の背景を黒に変換するアプリ",
+  title: "SakeLens",
+  description: "日本酒ボトルをスタジオ撮影風に自動変換",
 };
 
 export default function RootLayout({
