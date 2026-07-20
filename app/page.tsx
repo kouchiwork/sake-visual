@@ -132,9 +132,9 @@ async function processImage(item: ImageItem): Promise<string> {
   const scaledW = bw * scale;
   const scaledH = bh * scale;
 
-  // 瓶の底を BOTTLE_BOTTOM_Y に固定（参考画像の位置に統一）
+  // 上下余白を均等に（垂直中央揃え）
   const destX = (OUTPUT_W - scaledW) / 2;
-  const destY = OUTPUT_H * BOTTLE_BOTTOM_Y - scaledH;
+  const destY = (OUTPUT_H - scaledH) / 2;
 
   // 最終キャンバス
   const canvas = document.createElement("canvas");
