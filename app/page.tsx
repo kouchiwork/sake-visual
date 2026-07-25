@@ -5,9 +5,8 @@ import { useState, useCallback, useRef } from "react";
 // ── 出力設定 ──────────────────────────────────────────
 const OUTPUT_W = 800;
 const OUTPUT_H = 1000;
-const BOTTLE_MAX_H_RATIO = 0.80; // 参考画像に合わせた高さ比率
-const BOTTLE_MAX_W_RATIO = 0.48; // 参考画像に合わせた幅比率
-const BOTTLE_BOTTOM_Y    = 0.84; // 瓶の底を置くY位置（比率）
+const BOTTLE_MAX_H_RATIO = 0.80;
+const BOTTLE_MAX_W_RATIO = 0.48;
 
 // ── 型 ────────────────────────────────────────────────
 type ImageItem = {
@@ -87,46 +86,49 @@ function drawStudioBackground(ctx: CanvasRenderingContext2D, seamY: number) {
   ctx.fillRect(0, 0, w, h);
 }
 
-// ── 影（楕円変形で自然なキャストシャドウ）
-// 台形パスを使わず、canvas の scale 変換で楕円を横に引き伸ばす。
-// これが実際のスタジオ写真の影に最も近い表現。
+// ── 影
+// scale変換を使わず ctx.ellipse() で直接描く。
+// scale+filter の組み合わせはブラー半径が変換比率で歪むため廃止。
 function drawShadow(
   ctx: CanvasRenderingContext2D,
   centerX: number, seamY: number, scaledW: number
 ) {
-  // ── 1. 接地影（瓶底直下・タイト）
+  const fy = seamY + 2; // 床面のY（瓶底のすぐ下）
+
+  // 1. 接地影 — 瓶底直下のタイトな暗い楕円
+  //    幅: 瓶幅の約40%、高さ: 7px
   ctx.save();
-  ctx.translate(centerX, seamY);
-  ctx.scale(1, 0.18);
-  ctx.filter = "blur(4px)";
-  const contact = ctx.createRadialGradient(0, 0, 0, 0, 0, scaledW * 0.30);
-  contact.addColorStop(0,   "rgba(0,0,0,0.55)");
-  contact.addColorStop(0.5, "rgba(0,0,0,0.25)");
+  ctx.filter = "blur(5px)";
+  ctx.beginPath();
+  ctx.ellipse(centerX, fy, scaledW * 0.20, 7, 0, 0, Math.PI * 2);
+  const contact = ctx.createRadialGradient(centerX, fy, 0, centerX, fy, scaledW * 0.20);
+  contact.addColorStop(0,   "rgba(0,0,0,0.50)");
+  contact.addColorStop(0.6, "rgba(0,0,0,0.20)");
   contact.addColorStop(1,   "rgba(0,0,0,0)");
   ctx.fillStyle = contact;
-  ctx.beginPath();
-  ctx.arc(0, 0, scaledW * 0.30, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  // ── 2. キャストシャドウ（右方向へ伸びる・拡散）
-  //    原点を瓶底に置き、X方向に大きく引き伸ばし、右にオフセット
-  const castOffX = scaledW * 0.55;   // 右へのオフセット
-  const castScaleX = 2.8;            // 横への引き伸ばし倍率
-  const castScaleY = 0.12;           // 縦の圧縮（床に寝た楕円）
+  // 2. キャストシャドウ — 右方向に伸びる拡散影
+  //    中心を右にオフセットした扁平楕円 + 右に向かって薄くなる線形グラデ
+  const castCX  = centerX + scaledW * 0.42; // 楕円の中心（右にオフセット）
+  const castRX  = scaledW * 0.75;           // 楕円の横半径
+  const castRY  = 14;                        // 楕円の縦半径（扁平）
 
   ctx.save();
-  ctx.translate(centerX + castOffX, seamY + 2);
-  ctx.scale(castScaleX, castScaleY);
-  ctx.filter = "blur(18px)";
-  const cast = ctx.createRadialGradient(0, 0, 0, 0, 0, scaledW * 0.45);
-  cast.addColorStop(0,    "rgba(0,0,0,0.38)");
-  cast.addColorStop(0.40, "rgba(0,0,0,0.18)");
-  cast.addColorStop(0.75, "rgba(0,0,0,0.06)");
-  cast.addColorStop(1,    "rgba(0,0,0,0)");
-  ctx.fillStyle = cast;
+  ctx.filter = "blur(12px)";
   ctx.beginPath();
-  ctx.arc(0, 0, scaledW * 0.45, 0, Math.PI * 2);
+  ctx.ellipse(castCX, fy + 5, castRX, castRY, 0, 0, Math.PI * 2);
+  // 左(瓶側)が濃く、右(遠端)が薄い線形グラデ
+  const castGrad = ctx.createLinearGradient(
+    centerX - scaledW * 0.1, 0,
+    centerX + scaledW * 1.2, 0
+  );
+  castGrad.addColorStop(0,    "rgba(0,0,0,0.30)");
+  castGrad.addColorStop(0.30, "rgba(0,0,0,0.18)");
+  castGrad.addColorStop(0.65, "rgba(0,0,0,0.06)");
+  castGrad.addColorStop(1,    "rgba(0,0,0,0)");
+  ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 }
@@ -169,12 +171,11 @@ async function processImage(item: ImageItem): Promise<string> {
   const scaledW = bw * scale;
   const scaledH = bh * scale;
 
-  // 上下余白を均等に（垂直中央揃え）
-  const destX = (OUTPUT_W - scaledW) / 2;
-  const destY = (OUTPUT_H - scaledH) / 2;
-
-  const seamY    = destY + scaledH;       // 瓶の底 = 壁と床の境目
-  const centerX  = OUTPUT_W / 2;
+  // 垂直中央揃え（位置は変えない）
+  const destX   = (OUTPUT_W - scaledW) / 2;
+  const destY   = (OUTPUT_H - scaledH) / 2;
+  const seamY   = destY + scaledH;  // 瓶底 = 床面
+  const centerX = OUTPUT_W / 2;
 
   // 最終キャンバス
   const canvas = document.createElement("canvas");
