@@ -189,6 +189,33 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目）
   drawStudioBackground(ctx, seamY);
 
+  // キャストシャドウ（seamY 以下にクリップして瓶底への上向きにじみを防ぐ）
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
+  ctx.clip();
+
+  ctx.save();
+  ctx.filter = "blur(14px)";
+  ctx.beginPath();
+  // 瓶底左端から始まり右方向へ伸びる扁平楕円
+  // 中心を右にオフセットすることで瓶底から右へ自然に流れる
+  ctx.ellipse(centerX + scaledW * 0.40, seamY + 6, scaledW * 0.78, 13, 0, 0, Math.PI * 2);
+  // 左（瓶側）が濃く、右（遠端）が薄い
+  const castGrad = ctx.createLinearGradient(
+    centerX - scaledW * 0.1, 0,
+    centerX + scaledW * 1.3, 0
+  );
+  castGrad.addColorStop(0,    "rgba(0,0,0,0.32)");
+  castGrad.addColorStop(0.25, "rgba(0,0,0,0.20)");
+  castGrad.addColorStop(0.60, "rgba(0,0,0,0.07)");
+  castGrad.addColorStop(1,    "rgba(0,0,0,0)");
+  ctx.fillStyle = castGrad;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore(); // クリップ解除
+
   // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
