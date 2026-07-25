@@ -93,10 +93,17 @@ function drawShadow(
   ctx: CanvasRenderingContext2D,
   centerX: number, seamY: number, scaledW: number
 ) {
-  const fy = seamY + 2; // 床面のY（瓶底のすぐ下）
+  // seamY より上に影がにじまないよう床面にクリップ。
+  // blur をかけると描画領域外にもにじむため、これがないと
+  // 瓶底の半透明エッジから影が透けて「浮いてる」ように見える。
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
+  ctx.clip();
 
-  // 1. 接地影 — 瓶底直下のタイトな暗い楕円
-  //    幅: 瓶幅の約40%、高さ: 7px
+  const fy = seamY + 1;
+
+  // 1. 接地影（瓶底直下・タイト）
   ctx.save();
   ctx.filter = "blur(5px)";
   ctx.beginPath();
@@ -109,17 +116,11 @@ function drawShadow(
   ctx.fill();
   ctx.restore();
 
-  // 2. キャストシャドウ — 右方向に伸びる拡散影
-  //    中心を右にオフセットした扁平楕円 + 右に向かって薄くなる線形グラデ
-  const castCX  = centerX + scaledW * 0.42; // 楕円の中心（右にオフセット）
-  const castRX  = scaledW * 0.75;           // 楕円の横半径
-  const castRY  = 14;                        // 楕円の縦半径（扁平）
-
+  // 2. キャストシャドウ（右方向・扁平楕円＋線形グラデ）
   ctx.save();
   ctx.filter = "blur(12px)";
   ctx.beginPath();
-  ctx.ellipse(castCX, fy + 5, castRX, castRY, 0, 0, Math.PI * 2);
-  // 左(瓶側)が濃く、右(遠端)が薄い線形グラデ
+  ctx.ellipse(centerX + scaledW * 0.42, fy + 5, scaledW * 0.75, 14, 0, 0, Math.PI * 2);
   const castGrad = ctx.createLinearGradient(
     centerX - scaledW * 0.1, 0,
     centerX + scaledW * 1.2, 0
@@ -131,6 +132,8 @@ function drawShadow(
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
+
+  ctx.restore(); // クリップ解除
 }
 
 // ── 画像1枚を処理 ────────────────────────────────────
