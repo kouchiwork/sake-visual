@@ -189,9 +189,6 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目）
   drawStudioBackground(ctx, seamY);
 
-  // 影（先に描いてから瓶を乗せる）
-  drawShadow(ctx, centerX, seamY, scaledW);
-
   // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
