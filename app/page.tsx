@@ -190,34 +190,36 @@ async function processImage(item: ImageItem): Promise<string> {
   drawStudioBackground(ctx, seamY);
 
   // キャストシャドウ
-  // クリップしない。瓶底を起点に右へ伸び、瓶本体（後から描画）が上に乗ることで
-  // 瓶の下の影は自然に隠れ、右側だけが見えるようになる。
-  // 楕円の中心を「瓶底のやや右」に置き、左端が瓶底と重なるようにする。
+  // 瓶の右端より右・かつ瓶底より下のみに描画することで
+  // 瓶の下には一切影が出ない
+  const bottleRight = destX + scaledW;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(bottleRight - 10, seamY, OUTPUT_W - bottleRight + 10, OUTPUT_H - seamY);
+  ctx.clip();
+
   ctx.save();
   ctx.filter = "blur(16px)";
   ctx.beginPath();
   ctx.ellipse(
-    centerX + scaledW * 0.28,  // 中心：瓶底から右に28%オフセット
-    seamY + 5,
-    scaledW * 0.85,             // 横半径：瓶幅の85%（左右に広がる）
-    15,                         // 縦半径：扁平
+    bottleRight + scaledW * 0.3,  // 中心：瓶右端の少し外
+    seamY + 4,
+    scaledW * 0.65,               // 横半径
+    13,                           // 縦半径（扁平）
     0, 0, Math.PI * 2
   );
-  // 瓶底（左）が最も濃く、右端に向けてフェード
-  const castGrad = ctx.createLinearGradient(
-    centerX - scaledW * 0.2, 0,
-    centerX + scaledW * 1.3, 0
-  );
-  castGrad.addColorStop(0,    "rgba(0,0,0,0.28)");
-  castGrad.addColorStop(0.15, "rgba(0,0,0,0.22)");
-  castGrad.addColorStop(0.45, "rgba(0,0,0,0.10)");
-  castGrad.addColorStop(0.75, "rgba(0,0,0,0.03)");
+  const castGrad = ctx.createLinearGradient(bottleRight, 0, bottleRight + scaledW * 1.1, 0);
+  castGrad.addColorStop(0,    "rgba(0,0,0,0.30)");
+  castGrad.addColorStop(0.35, "rgba(0,0,0,0.14)");
+  castGrad.addColorStop(0.70, "rgba(0,0,0,0.04)");
   castGrad.addColorStop(1,    "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 
-  // 瓶本体（影の上に乗る。瓶の不透明ピクセルが影を自然に隠す）
+  ctx.restore(); // クリップ解除
+
+  // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
   return new Promise((resolve) => {
