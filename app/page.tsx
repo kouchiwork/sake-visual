@@ -41,45 +41,59 @@ function getBoundingBox(imageData: ImageData) {
 function drawStudioBackground(ctx: CanvasRenderingContext2D) {
   const w = OUTPUT_W, h = OUTPUT_H;
 
-  // 1. ベース（参考画像の壁面グレー：実測値 ~#919395）
-  //    旧値 #c8cbcf は明るすぎた。参考画像の未照射コーナーを計測して修正。
-  ctx.fillStyle = "#919395";
+  const floorY = h * 0.62;
+
+  // 1. ベース壁面（全体を少し明るく）
+  ctx.fillStyle = "#a8aaac";
   ctx.fillRect(0, 0, w, h);
 
-  // 2. ソフトボックス（左上から拡散）
-  //    ベースが暗くなった分、stop[0]を強くして参考画像と同等の明るさを確保
+  // 2. ソフトボックス（左上から瓶の背後を明るく照らす）
   const softbox = ctx.createRadialGradient(
     w * 0.38, h * 0.10, 0,
-    w * 0.38, h * 0.10, w * 1.1
+    w * 0.38, h * 0.10, w * 1.0
   );
-  softbox.addColorStop(0,    "rgba(255,255,255,0.58)");
-  softbox.addColorStop(0.20, "rgba(255,255,255,0.30)");
-  softbox.addColorStop(0.48, "rgba(255,255,255,0.09)");
-  softbox.addColorStop(0.72, "rgba(255,255,255,0.02)");
+  softbox.addColorStop(0,    "rgba(255,255,255,0.62)");
+  softbox.addColorStop(0.18, "rgba(255,255,255,0.34)");
+  softbox.addColorStop(0.45, "rgba(255,255,255,0.10)");
+  softbox.addColorStop(0.70, "rgba(255,255,255,0.02)");
   softbox.addColorStop(1,    "rgba(255,255,255,0)");
   ctx.fillStyle = softbox;
   ctx.fillRect(0, 0, w, h);
 
-  // 3. 床面暗化：参考画像の床は壁より明確に暗い（~#787b80 相当）
-  //    ベースが #919395 なので rgba(0,0,0,0.22) で概ね一致
-  const floorY = h * 0.62;
+  // 3. 壁/床の境界をより明確に（境界付近に暗めのアクセント）
+  const boundary = ctx.createLinearGradient(0, floorY - 25, 0, floorY + 55);
+  boundary.addColorStop(0,    "rgba(0,0,0,0)");
+  boundary.addColorStop(0.48, "rgba(0,0,0,0.09)");
+  boundary.addColorStop(0.72, "rgba(0,0,0,0.04)");
+  boundary.addColorStop(1,    "rgba(0,0,0,0)");
+  ctx.fillStyle = boundary;
+  ctx.fillRect(0, floorY - 25, w, 80);
+
+  // 4. 床面暗化（より急な勾配で壁との差を強調）
   const floor = ctx.createLinearGradient(0, floorY, 0, h);
-  floor.addColorStop(0,    "rgba(0,0,0,0)");
-  floor.addColorStop(0.20, "rgba(0,0,0,0.09)");
-  floor.addColorStop(0.52, "rgba(0,0,0,0.18)");
-  floor.addColorStop(1,    "rgba(0,0,0,0.26)");
+  floor.addColorStop(0,    "rgba(0,0,0,0.05)");
+  floor.addColorStop(0.18, "rgba(0,0,0,0.15)");
+  floor.addColorStop(0.48, "rgba(0,0,0,0.24)");
+  floor.addColorStop(1,    "rgba(0,0,0,0.32)");
   ctx.fillStyle = floor;
   ctx.fillRect(0, floorY, w, h - floorY);
 
-  // 4. 左右端シェーディング
+  // 5. 奥行き感（手前の床が暗くなる遠近法）
+  const depth = ctx.createLinearGradient(0, h * 0.78, 0, h);
+  depth.addColorStop(0, "rgba(0,0,0,0)");
+  depth.addColorStop(1, "rgba(0,0,0,0.18)");
+  ctx.fillStyle = depth;
+  ctx.fillRect(0, h * 0.78, w, h - h * 0.78);
+
+  // 6. 左右端シェーディング
   const sideL = ctx.createLinearGradient(0, 0, w * 0.22, 0);
-  sideL.addColorStop(0, "rgba(0,0,0,0.09)");
+  sideL.addColorStop(0, "rgba(0,0,0,0.10)");
   sideL.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideL;
   ctx.fillRect(0, 0, w, h);
 
   const sideR = ctx.createLinearGradient(w, 0, w * 0.78, 0);
-  sideR.addColorStop(0, "rgba(0,0,0,0.07)");
+  sideR.addColorStop(0, "rgba(0,0,0,0.08)");
   sideR.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideR;
   ctx.fillRect(0, 0, w, h);
@@ -146,25 +160,25 @@ async function processImage(item: ImageItem): Promise<string> {
   // ・床面（seamY 以下） → 影がそのまま表示 → 右に伸びるキャストシャドウ
   // y クリップすると瓶底と影の間に隙間が生まれ「浮き」の原因になる
   ctx.save();
-  ctx.filter = "blur(14px)";
+  ctx.filter = "blur(13px)";
   ctx.beginPath();
   ctx.ellipse(
-    bottleRight,        // 中心X：瓶右端（ここが最暗部・影の起点）
-    seamY,              // 中心Y：床面ライン上（ブラーが上下に広がる）
-    scaledW * 0.78,     // 横半径：瓶左端付近〜右外まで届く広い楕円
-    11,                 // 縦半径：床面に貼り付いた扁平な楕円
+    bottleRight,        // 中心X：瓶右端
+    seamY,              // 中心Y：床面ライン
+    scaledW * 1.25,     // 横半径を大きく拡大（影を長く伸ばす）
+    11,                 // 縦半径：扁平
     0, 0, Math.PI * 2
   );
-  // グラデーション：瓶左端（透明）→ 瓶右端付近（最暗）→ 右遠方（透明）
-  // 左側が透明になることで瓶の左側の床に影が漏れない
+  // 瓶左端（透明）→ 瓶右端付近（最暗）→ 遠方まで長く（透明）
   const castGrad = ctx.createLinearGradient(
-    destX, 0,                        // 瓶左端：ここから透明
-    bottleRight + scaledW * 1.15, 0  // 右端：ここで透明に戻る
+    destX, 0,                        // 瓶左端：透明開始
+    bottleRight + scaledW * 2.2, 0   // 右へ大きく延長
   );
   castGrad.addColorStop(0,    "rgba(0,0,0,0)");
-  castGrad.addColorStop(0.36, "rgba(0,0,0,0.32)");
-  castGrad.addColorStop(0.58, "rgba(0,0,0,0.15)");
-  castGrad.addColorStop(0.80, "rgba(0,0,0,0.04)");
+  castGrad.addColorStop(0.28, "rgba(0,0,0,0.32)");
+  castGrad.addColorStop(0.50, "rgba(0,0,0,0.16)");
+  castGrad.addColorStop(0.72, "rgba(0,0,0,0.06)");
+  castGrad.addColorStop(0.88, "rgba(0,0,0,0.02)");
   castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
