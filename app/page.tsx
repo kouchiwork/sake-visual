@@ -156,44 +156,49 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目：seamY基準）
   drawStudioBackground(ctx, seamY);
 
-  // ── 接地スポット（瓶の前: 瓶底直下のみ、楕円）─────────────
-  // 光源: 左上。接地面の暗部は瓶の真下のみ（左右対称）。
-  // 瓶を描く前に描いてガラス底の半透明部分と自然にブレンドさせる。
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(destX, seamY - 18, scaledW, 40);   // 瓶の幅内にクリップ
-  ctx.clip();
-  ctx.filter = "blur(12px)";
-  ctx.beginPath();
-  ctx.ellipse(centerX, seamY, scaledW * 0.42, 12, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.80)";
-  ctx.fill();
-  ctx.restore();
+  // ── 床面影（seamY以下クリップ）────────────────────────
+  // 楕円中心をseamYに置き、クリップで下半分だけ表示することで
+  // 床面との接触点からすぐ影が始まるようにする。
+  const peakFrac = scaledW / (OUTPUT_W - destX);
+  const shadowRY = 26;
 
-  // ── 投影影（右方向のみ: centerX以右にclip）──────────────
-  // 光源が左上なら影は右下に落ちる。centerXより左は完全にゼロ。
-  const rightW = OUTPUT_W - centerX;          // 右半分の幅
   ctx.save();
   ctx.beginPath();
-  ctx.rect(centerX, seamY, rightW, OUTPUT_H - seamY);  // 右半分のみ
+  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
   ctx.clip();
-  ctx.filter = "blur(22px)";
+  ctx.filter = "blur(18px)";
   ctx.beginPath();
-  ctx.ellipse(centerX + rightW * 0.45, seamY + 20, rightW * 0.90, 28, 0, 0, Math.PI * 2);
-  // 瓶右端(bottleRight)でピーク、右方向へフェード
-  const castGrad = ctx.createLinearGradient(centerX, 0, OUTPUT_W, 0);
-  castGrad.addColorStop(0,    "rgba(0,0,0,0.82)");  // centerX = 影の左端
-  castGrad.addColorStop(0.22, "rgba(0,0,0,0.65)");
-  castGrad.addColorStop(0.48, "rgba(0,0,0,0.38)");
-  castGrad.addColorStop(0.70, "rgba(0,0,0,0.15)");
-  castGrad.addColorStop(0.88, "rgba(0,0,0,0.04)");
-  castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
-  ctx.fillStyle = castGrad;
+  ctx.ellipse(centerX + scaledW * 0.20, seamY, scaledW * 1.55, shadowRY, 0, 0, Math.PI * 2);
+  const floorGrad = ctx.createLinearGradient(destX - scaledW * 0.3, 0, OUTPUT_W, 0);
+  floorGrad.addColorStop(0,                                          "rgba(0,0,0,0.30)");
+  floorGrad.addColorStop(Math.max(0.08, peakFrac - 0.10),            "rgba(0,0,0,0.70)");
+  floorGrad.addColorStop(Math.min(0.88, peakFrac + 0.05),            "rgba(0,0,0,0.80)");
+  floorGrad.addColorStop(Math.min(0.93, peakFrac + 0.22),            "rgba(0,0,0,0.48)");
+  floorGrad.addColorStop(Math.min(0.96, peakFrac + 0.40),            "rgba(0,0,0,0.18)");
+  floorGrad.addColorStop(Math.min(0.99, peakFrac + 0.56),            "rgba(0,0,0,0.04)");
+  floorGrad.addColorStop(1.0,                                        "rgba(0,0,0,0)");
+  ctx.fillStyle = floorGrad;
   ctx.fill();
   ctx.restore();
 
   // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
+
+  // ── 接地暗化（瓶の後）─────────────────────────────────
+  // seamYの上下20pxを暗くして、半透明ガラス底と床の境界を消す。
+  // blur=12px で瓶底ハロー（半透明pixel＋床）を覆う。
+  const lineGrad = ctx.createLinearGradient(destX - scaledW * 0.05, 0, bottleRight + scaledW * 0.45, 0);
+  lineGrad.addColorStop(0,    "rgba(0,0,0,0)");
+  lineGrad.addColorStop(0.06, "rgba(0,0,0,0.65)");
+  lineGrad.addColorStop(0.30, "rgba(0,0,0,0.95)");
+  lineGrad.addColorStop(0.60, "rgba(0,0,0,0.95)");
+  lineGrad.addColorStop(0.82, "rgba(0,0,0,0.65)");
+  lineGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
+  ctx.save();
+  ctx.filter = "blur(12px)";
+  ctx.fillStyle = lineGrad;
+  ctx.fillRect(destX - scaledW * 0.05, seamY - 20, scaledW * 1.5, 26);
+  ctx.restore();
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
