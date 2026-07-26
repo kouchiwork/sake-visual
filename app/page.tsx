@@ -41,29 +41,33 @@ function getBoundingBox(imageData: ImageData) {
 function drawStudioBackground(ctx: CanvasRenderingContext2D) {
   const w = OUTPUT_W, h = OUTPUT_H;
 
-  // 1. ベース（参考画像の壁面グレー #c8cbcf）
-  ctx.fillStyle = "#c8cbcf";
+  // 1. ベース（参考画像の壁面グレー：実測値 ~#919395）
+  //    旧値 #c8cbcf は明るすぎた。参考画像の未照射コーナーを計測して修正。
+  ctx.fillStyle = "#919395";
   ctx.fillRect(0, 0, w, h);
 
   // 2. ソフトボックス（左上から拡散）
+  //    ベースが暗くなった分、stop[0]を強くして参考画像と同等の明るさを確保
   const softbox = ctx.createRadialGradient(
     w * 0.38, h * 0.10, 0,
     w * 0.38, h * 0.10, w * 1.1
   );
-  softbox.addColorStop(0,    "rgba(255,255,255,0.52)");
-  softbox.addColorStop(0.25, "rgba(255,255,255,0.22)");
-  softbox.addColorStop(0.55, "rgba(255,255,255,0.06)");
+  softbox.addColorStop(0,    "rgba(255,255,255,0.58)");
+  softbox.addColorStop(0.20, "rgba(255,255,255,0.30)");
+  softbox.addColorStop(0.48, "rgba(255,255,255,0.09)");
+  softbox.addColorStop(0.72, "rgba(255,255,255,0.02)");
   softbox.addColorStop(1,    "rgba(255,255,255,0)");
   ctx.fillStyle = softbox;
   ctx.fillRect(0, 0, w, h);
 
-  // 3. 床面暗化：h*0.62 から下へ（固定位置でスイープ紙の曲面を表現）
+  // 3. 床面暗化：参考画像の床は壁より明確に暗い（~#787b80 相当）
+  //    ベースが #919395 なので rgba(0,0,0,0.22) で概ね一致
   const floorY = h * 0.62;
   const floor = ctx.createLinearGradient(0, floorY, 0, h);
   floor.addColorStop(0,    "rgba(0,0,0,0)");
-  floor.addColorStop(0.22, "rgba(0,0,0,0.08)");
-  floor.addColorStop(0.55, "rgba(0,0,0,0.17)");
-  floor.addColorStop(1,    "rgba(0,0,0,0.24)");
+  floor.addColorStop(0.20, "rgba(0,0,0,0.09)");
+  floor.addColorStop(0.52, "rgba(0,0,0,0.18)");
+  floor.addColorStop(1,    "rgba(0,0,0,0.26)");
   ctx.fillStyle = floor;
   ctx.fillRect(0, floorY, w, h - floorY);
 
