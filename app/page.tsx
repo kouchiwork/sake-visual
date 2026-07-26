@@ -142,8 +142,8 @@ async function processImage(item: ImageItem): Promise<string> {
   // 水平中央・垂直中央
   const destX   = (OUTPUT_W - scaledW) / 2;
   const destY   = (OUTPUT_H - scaledH) / 2;
-  // seamY: alpha>128 の最下行基準（半透明trailing pixelを除外して接地点を正確に算出）
-  const seamY   = destY + (visualMaxY - minY) * scale;
+  // seamY: maxY（alpha>15）の最下行基準。ガラス底の半透明ピクセルも含む。
+  const seamY   = destY + (maxY - minY) * scale;
   const centerX = OUTPUT_W / 2;
   const bottleRight = destX + scaledW; // = centerX + scaledW/2
 
@@ -156,61 +156,48 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目：seamY基準）
   drawStudioBackground(ctx, seamY);
 
-  // ── キャストシャドウ（Cast Shadow）──────────────────
-  const castVR   = scaledW * 0.22;
-  const castHR   = scaledW * 1.20;
+  // ── 床面影（seamY以下クリップ）────────────────────────
+  // 楕円中心をseamYに置き、クリップで下半分だけ表示することで
+  // 床面との接触点からすぐ影が始まるようにする。
   const peakFrac = scaledW / (OUTPUT_W - destX);
+  const shadowRY = 26;
 
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
   ctx.clip();
-  ctx.filter = "blur(14px)";
+  ctx.filter = "blur(18px)";
   ctx.beginPath();
-  ctx.ellipse(
-    bottleRight + scaledW * 0.08,
-    seamY + castVR * 0.85,
-    castHR,
-    castVR,
-    0, 0, Math.PI * 2
-  );
-  const castGrad = ctx.createLinearGradient(destX, 0, OUTPUT_W, 0);
-  castGrad.addColorStop(0,                                    "rgba(0,0,0,0)");
-  castGrad.addColorStop(Math.max(peakFrac - 0.08, 0.02),      "rgba(0,0,0,0.42)");
-  castGrad.addColorStop(Math.min(peakFrac,         0.92),      "rgba(0,0,0,0.58)");
-  castGrad.addColorStop(Math.min(peakFrac + 0.14,  0.95),      "rgba(0,0,0,0.34)");
-  castGrad.addColorStop(Math.min(peakFrac + 0.30,  0.97),      "rgba(0,0,0,0.14)");
-  castGrad.addColorStop(Math.min(peakFrac + 0.48,  0.99),      "rgba(0,0,0,0.04)");
-  castGrad.addColorStop(1.0,                                   "rgba(0,0,0,0)");
-  ctx.fillStyle = castGrad;
+  ctx.ellipse(centerX + scaledW * 0.20, seamY, scaledW * 1.55, shadowRY, 0, 0, Math.PI * 2);
+  const floorGrad = ctx.createLinearGradient(destX - scaledW * 0.3, 0, OUTPUT_W, 0);
+  floorGrad.addColorStop(0,                                          "rgba(0,0,0,0.30)");
+  floorGrad.addColorStop(Math.max(0.08, peakFrac - 0.10),            "rgba(0,0,0,0.70)");
+  floorGrad.addColorStop(Math.min(0.88, peakFrac + 0.05),            "rgba(0,0,0,0.80)");
+  floorGrad.addColorStop(Math.min(0.93, peakFrac + 0.22),            "rgba(0,0,0,0.48)");
+  floorGrad.addColorStop(Math.min(0.96, peakFrac + 0.40),            "rgba(0,0,0,0.18)");
+  floorGrad.addColorStop(Math.min(0.99, peakFrac + 0.56),            "rgba(0,0,0,0.04)");
+  floorGrad.addColorStop(1.0,                                        "rgba(0,0,0,0)");
+  ctx.fillStyle = floorGrad;
   ctx.fill();
   ctx.restore();
 
-  // 瓶本体を描画（影は後から重ねる）
+  // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
-  // ── 接地影（Contact Shadow）─────────────────────────
-  // 瓶を描いた後に重ねる。これにより半透明の瓶底ピクセルに影が上書きされ
-  // 瓶底とフロアの隙間が埋まる（浮き感の根本解消）。
-  // 瓶の暗いガラス底部に重なっても自然に見える（ガラスはもともと暗い）。
-  // 接地影: 瓶底幅より大きい横半径で瓶底周辺の床を全体的に暗くする
-  const contactY = seamY + 2;
-  const contactRX = scaledW * 1.0;  // 瓶幅と同程度の横広がり
+  // ── 接地暗化（瓶の後）─────────────────────────────────
+  // seamYの上下20pxを暗くして、半透明ガラス底と床の境界を消す。
+  // blur=12px で瓶底ハロー（半透明pixel＋床）を覆う。
+  const lineGrad = ctx.createLinearGradient(destX - scaledW * 0.05, 0, bottleRight + scaledW * 0.45, 0);
+  lineGrad.addColorStop(0,    "rgba(0,0,0,0)");
+  lineGrad.addColorStop(0.06, "rgba(0,0,0,0.65)");
+  lineGrad.addColorStop(0.30, "rgba(0,0,0,0.95)");
+  lineGrad.addColorStop(0.60, "rgba(0,0,0,0.95)");
+  lineGrad.addColorStop(0.82, "rgba(0,0,0,0.65)");
+  lineGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
   ctx.save();
-  ctx.filter = "blur(10px)";
-  ctx.beginPath();
-  ctx.ellipse(centerX, contactY, contactRX, 20, 0, 0, Math.PI * 2);
-  const contactGrad = ctx.createRadialGradient(
-    centerX, contactY, 0,
-    centerX, contactY, contactRX
-  );
-  contactGrad.addColorStop(0,   "rgba(0,0,0,0.90)");
-  contactGrad.addColorStop(0.30,"rgba(0,0,0,0.65)");
-  contactGrad.addColorStop(0.55,"rgba(0,0,0,0.35)");
-  contactGrad.addColorStop(0.80,"rgba(0,0,0,0.10)");
-  contactGrad.addColorStop(1,   "rgba(0,0,0,0)");
-  ctx.fillStyle = contactGrad;
-  ctx.fill();
+  ctx.filter = "blur(12px)";
+  ctx.fillStyle = lineGrad;
+  ctx.fillRect(destX - scaledW * 0.05, seamY - 20, scaledW * 1.5, 26);
   ctx.restore();
 
   return new Promise((resolve) => {
