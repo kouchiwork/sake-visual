@@ -19,9 +19,11 @@ type ImageItem = {
 };
 
 // ── 透明ピクセルを除いたバウンディングボックスを取得 ──
+// visualMaxY: alpha > 128 の最下行（接地影の基準点として使用）
 function getBoundingBox(imageData: ImageData) {
   const { data, width, height } = imageData;
   let minX = width, minY = height, maxX = 0, maxY = 0;
+  let visualMaxY = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const a = data[(y * width + x) * 4 + 3];
@@ -31,9 +33,10 @@ function getBoundingBox(imageData: ImageData) {
         if (x > maxX) maxX = x;
         if (y > maxY) maxY = y;
       }
+      if (a > 128 && y > visualMaxY) visualMaxY = y;
     }
   }
-  return { minX, minY, maxX, maxY };
+  return { minX, minY, maxX, maxY, visualMaxY };
 }
 
 // ── スタジオ背景
@@ -120,7 +123,7 @@ async function processImage(item: ImageItem): Promise<string> {
   tmpCanvas.height = img.naturalHeight;
   const tmpCtx = tmpCanvas.getContext("2d")!;
   tmpCtx.drawImage(img, 0, 0);
-  const { minX, minY, maxX, maxY } = getBoundingBox(
+  const { minX, minY, maxX, maxY, visualMaxY } = getBoundingBox(
     tmpCtx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height)
   );
 
@@ -139,7 +142,8 @@ async function processImage(item: ImageItem): Promise<string> {
   // 水平中央・垂直中央
   const destX   = (OUTPUT_W - scaledW) / 2;
   const destY   = (OUTPUT_H - scaledH) / 2;
-  const seamY   = destY + scaledH;  // 瓶底 = 床面ライン
+  // seamY: alpha>128 の最下行基準（半透明trailing pixelを除外して接地点を正確に算出）
+  const seamY   = destY + (visualMaxY - minY) * scale;
   const centerX = OUTPUT_W / 2;
   const bottleRight = destX + scaledW; // = centerX + scaledW/2
 
@@ -152,40 +156,10 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目：seamY基準）
   drawStudioBackground(ctx, seamY);
 
-  // ── キャストシャドウ ──────────────────────────────────
-  // クリップ一切なし。影の中心を seamY に置き、瓶を後から描く。
-  // ・瓶の不透明部分 → 上から覆って隠される（影は見えない）
-  // ・瓶底の半透明エッジ → 影と自然にブレンド → これが「接地感」の正体
-  // ・床面（seamY 以下） → 影がそのまま表示 → 右に伸びるキャストシャドウ
-  // y クリップすると瓶底と影の間に隙間が生まれ「浮き」の原因になる
-  // 楕円の「頂点」を seamY に合わせ、中心を seamY + shadowVR にする。
-  // これにより:
-  //   seamY より上: 影がほぼ出ない（ブラーの極少量にじみのみ → 瓶底と自然融合）
-  //   seamY より下: 縦半径分の高さを持つ影 → 切れない・奥行きがある
-  // ── 接地影（Contact Shadow）─────────────────────────
-  // 瓶底中央・小さく濃い。瓶が床に「乗っている」感の核心。
-  // クリップなし → blur が seamY の上にもにじみ、瓶底エッジと自然融合する
-  ctx.save();
-  ctx.filter = "blur(9px)";
-  ctx.beginPath();
-  ctx.ellipse(centerX, seamY, scaledW * 0.22, 10, 0, 0, Math.PI * 2);
-  const contactGrad = ctx.createRadialGradient(
-    centerX, seamY, 0,
-    centerX, seamY, scaledW * 0.22
-  );
-  contactGrad.addColorStop(0,   "rgba(0,0,0,0.70)");
-  contactGrad.addColorStop(0.5, "rgba(0,0,0,0.40)");
-  contactGrad.addColorStop(1,   "rgba(0,0,0,0)");
-  ctx.fillStyle = contactGrad;
-  ctx.fill();
-  ctx.restore();
-
   // ── キャストシャドウ（Cast Shadow）──────────────────
-  // 瓶右端から右方向へ伸びる影。床面（y > seamY）のみにクリップ。
-  // 高さのある楕円（縦半径 0.22*scaledW）で床面に奥行きを表現。
   const castVR   = scaledW * 0.22;
   const castHR   = scaledW * 1.20;
-  const peakFrac = scaledW / (OUTPUT_W - destX); // bottleRight の位置を fraction で表す
+  const peakFrac = scaledW / (OUTPUT_W - destX);
 
   ctx.save();
   ctx.beginPath();
@@ -194,14 +168,12 @@ async function processImage(item: ImageItem): Promise<string> {
   ctx.filter = "blur(14px)";
   ctx.beginPath();
   ctx.ellipse(
-    bottleRight + scaledW * 0.08, // 中心X: 瓶右端より少し外
-    seamY + castVR * 0.85,        // 中心Y: 楕円上端が seamY 付近に来る
+    bottleRight + scaledW * 0.08,
+    seamY + castVR * 0.85,
     castHR,
     castVR,
     0, 0, Math.PI * 2
   );
-  // グラデーション: 瓶左端(透明) → bottleRight(最暗) → 右端(透明)
-  // peakFrac を使って bottleRight に峰を合わせる
   const castGrad = ctx.createLinearGradient(destX, 0, OUTPUT_W, 0);
   castGrad.addColorStop(0,                                    "rgba(0,0,0,0)");
   castGrad.addColorStop(Math.max(peakFrac - 0.08, 0.02),      "rgba(0,0,0,0.42)");
@@ -214,8 +186,32 @@ async function processImage(item: ImageItem): Promise<string> {
   ctx.fill();
   ctx.restore();
 
-  // 瓶本体：2種の影の後に描くことで瓶ボディ部分の影は自然に隠れる
+  // 瓶本体を描画（影は後から重ねる）
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
+
+  // ── 接地影（Contact Shadow）─────────────────────────
+  // 瓶を描いた後に重ねる。これにより半透明の瓶底ピクセルに影が上書きされ
+  // 瓶底とフロアの隙間が埋まる（浮き感の根本解消）。
+  // 瓶の暗いガラス底部に重なっても自然に見える（ガラスはもともと暗い）。
+  // 接地影: 瓶底幅より大きい横半径で瓶底周辺の床を全体的に暗くする
+  const contactY = seamY + 2;
+  const contactRX = scaledW * 1.0;  // 瓶幅と同程度の横広がり
+  ctx.save();
+  ctx.filter = "blur(10px)";
+  ctx.beginPath();
+  ctx.ellipse(centerX, contactY, contactRX, 20, 0, 0, Math.PI * 2);
+  const contactGrad = ctx.createRadialGradient(
+    centerX, contactY, 0,
+    centerX, contactY, contactRX
+  );
+  contactGrad.addColorStop(0,   "rgba(0,0,0,0.90)");
+  contactGrad.addColorStop(0.30,"rgba(0,0,0,0.65)");
+  contactGrad.addColorStop(0.55,"rgba(0,0,0,0.35)");
+  contactGrad.addColorStop(0.80,"rgba(0,0,0,0.10)");
+  contactGrad.addColorStop(1,   "rgba(0,0,0,0)");
+  ctx.fillStyle = contactGrad;
+  ctx.fill();
+  ctx.restore();
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
