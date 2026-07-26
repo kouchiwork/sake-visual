@@ -162,40 +162,59 @@ async function processImage(item: ImageItem): Promise<string> {
   // これにより:
   //   seamY より上: 影がほぼ出ない（ブラーの極少量にじみのみ → 瓶底と自然融合）
   //   seamY より下: 縦半径分の高さを持つ影 → 切れない・奥行きがある
-  // 楕円の「頂点」を seamY に合わせる設計:
-  //   center Y = seamY + shadowVR  →  top of ellipse = seamY
-  //   seamY より上: ブラーの極少量にじみのみ（瓶底と自然融合）
-  //   seamY より下: shadowVR の高さをもつ実体ある影
-  const shadowVR = scaledW * 0.28;  // 縦半径（高さ）
-  const shadowHR = scaledW * 1.30;  // 横半径（より長く）
-  const gradEnd  = OUTPUT_W - 8;    // キャンバス右端で透明に
+  // ── 接地影（Contact Shadow）─────────────────────────
+  // 瓶底中央・小さく濃い。瓶が床に「乗っている」感の核心。
+  // クリップなし → blur が seamY の上にもにじみ、瓶底エッジと自然融合する
+  ctx.save();
+  ctx.filter = "blur(9px)";
+  ctx.beginPath();
+  ctx.ellipse(centerX, seamY, scaledW * 0.22, 10, 0, 0, Math.PI * 2);
+  const contactGrad = ctx.createRadialGradient(
+    centerX, seamY, 0,
+    centerX, seamY, scaledW * 0.22
+  );
+  contactGrad.addColorStop(0,   "rgba(0,0,0,0.70)");
+  contactGrad.addColorStop(0.5, "rgba(0,0,0,0.40)");
+  contactGrad.addColorStop(1,   "rgba(0,0,0,0)");
+  ctx.fillStyle = contactGrad;
+  ctx.fill();
+  ctx.restore();
 
-  // グラデーション峰を bottleRight に動的に合わせる
-  const peakFrac = Math.min((bottleRight - destX) / (gradEnd - destX), 0.90);
+  // ── キャストシャドウ（Cast Shadow）──────────────────
+  // 瓶右端から右方向へ伸びる影。床面（y > seamY）のみにクリップ。
+  // 高さのある楕円（縦半径 0.22*scaledW）で床面に奥行きを表現。
+  const castVR   = scaledW * 0.22;
+  const castHR   = scaledW * 1.20;
+  const peakFrac = scaledW / (OUTPUT_W - destX); // bottleRight の位置を fraction で表す
 
   ctx.save();
-  ctx.filter = "blur(16px)";
+  ctx.beginPath();
+  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
+  ctx.clip();
+  ctx.filter = "blur(14px)";
   ctx.beginPath();
   ctx.ellipse(
-    bottleRight,           // 中心X: 瓶右端
-    seamY + shadowVR,      // 中心Y: 楕円上端が seamY になる
-    shadowHR,
-    shadowVR,
+    bottleRight + scaledW * 0.08, // 中心X: 瓶右端より少し外
+    seamY + castVR * 0.85,        // 中心Y: 楕円上端が seamY 付近に来る
+    castHR,
+    castVR,
     0, 0, Math.PI * 2
   );
-  const castGrad = ctx.createLinearGradient(destX, 0, gradEnd, 0);
-  castGrad.addColorStop(0,                              "rgba(0,0,0,0)");
-  castGrad.addColorStop(peakFrac * 0.78,                "rgba(0,0,0,0.24)");
-  castGrad.addColorStop(peakFrac,                       "rgba(0,0,0,0.42)"); // 濃く
-  castGrad.addColorStop(Math.min(peakFrac + 0.10, 0.94),"rgba(0,0,0,0.26)");
-  castGrad.addColorStop(Math.min(peakFrac + 0.22, 0.97),"rgba(0,0,0,0.10)");
-  castGrad.addColorStop(Math.min(peakFrac + 0.34, 0.99),"rgba(0,0,0,0.03)");
-  castGrad.addColorStop(1.0,                            "rgba(0,0,0,0)");
+  // グラデーション: 瓶左端(透明) → bottleRight(最暗) → 右端(透明)
+  // peakFrac を使って bottleRight に峰を合わせる
+  const castGrad = ctx.createLinearGradient(destX, 0, OUTPUT_W, 0);
+  castGrad.addColorStop(0,                                    "rgba(0,0,0,0)");
+  castGrad.addColorStop(Math.max(peakFrac - 0.08, 0.02),      "rgba(0,0,0,0.42)");
+  castGrad.addColorStop(Math.min(peakFrac,         0.92),      "rgba(0,0,0,0.58)");
+  castGrad.addColorStop(Math.min(peakFrac + 0.14,  0.95),      "rgba(0,0,0,0.34)");
+  castGrad.addColorStop(Math.min(peakFrac + 0.30,  0.97),      "rgba(0,0,0,0.14)");
+  castGrad.addColorStop(Math.min(peakFrac + 0.48,  0.99),      "rgba(0,0,0,0.04)");
+  castGrad.addColorStop(1.0,                                   "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 
-  // 瓶本体：影の後に描くことで影の「瓶エリア部分」を自然に隠す
+  // 瓶本体：2種の影の後に描くことで瓶ボディ部分の影は自然に隠れる
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
   return new Promise((resolve) => {
