@@ -5,8 +5,8 @@ import { useState, useCallback, useRef } from "react";
 // ── 出力設定 ──────────────────────────────────────────
 const OUTPUT_W = 800;
 const OUTPUT_H = 1000;
-const BOTTLE_MAX_H_RATIO = 0.80;
-const BOTTLE_MAX_W_RATIO = 0.48;
+const BOTTLE_MAX_H_RATIO = 0.68;
+const BOTTLE_MAX_W_RATIO = 0.46;
 
 // ── 型 ────────────────────────────────────────────────
 type ImageItem = {
@@ -37,103 +37,48 @@ function getBoundingBox(imageData: ImageData) {
 }
 
 // ── スタジオ背景
-// seamY = 瓶の底位置。壁→床の色変化をここを基準に配置する。
-// 実際のスイープ紙は「ライン」ではなくグラデーションで変化する。
-function drawStudioBackground(ctx: CanvasRenderingContext2D, seamY: number) {
+// 壁→床の遷移は瓶位置に依存しない固定位置（参考画像から計測: h*0.62）
+function drawStudioBackground(ctx: CanvasRenderingContext2D) {
   const w = OUTPUT_W, h = OUTPUT_H;
 
-  // 1. ベース（参考画像の壁面グレー）
-  ctx.fillStyle = "#bfc2c7";
+  // 1. ベース（参考画像の壁面グレー #c8cbcf）
+  ctx.fillStyle = "#c8cbcf";
   ctx.fillRect(0, 0, w, h);
 
-  // 2. ソフトボックス（左上から大きく広がる拡散光）
-  //    中心を左上寄りにすることで自然なライティング感
+  // 2. ソフトボックス（左上から拡散）
   const softbox = ctx.createRadialGradient(
-    w * 0.40, h * 0.12, 0,
-    w * 0.40, h * 0.12, w * 1.15
+    w * 0.38, h * 0.10, 0,
+    w * 0.38, h * 0.10, w * 1.1
   );
-  softbox.addColorStop(0,    "rgba(255,255,255,0.55)");
-  softbox.addColorStop(0.22, "rgba(255,255,255,0.28)");
-  softbox.addColorStop(0.50, "rgba(255,255,255,0.08)");
-  softbox.addColorStop(0.80, "rgba(255,255,255,0.01)");
+  softbox.addColorStop(0,    "rgba(255,255,255,0.52)");
+  softbox.addColorStop(0.25, "rgba(255,255,255,0.22)");
+  softbox.addColorStop(0.55, "rgba(255,255,255,0.06)");
   softbox.addColorStop(1,    "rgba(255,255,255,0)");
   ctx.fillStyle = softbox;
   ctx.fillRect(0, 0, w, h);
 
-  // 3. 床面の暗化（スイープ紙カーブ）
-  //    seamY の少し上から始まり、下に向かって徐々に暗くなる。
-  //    これだけで「壁と床の別れ目」が自然に見える。
-  const transStart = seamY - h * 0.18;
-  const floor = ctx.createLinearGradient(0, transStart, 0, h);
+  // 3. 床面暗化：h*0.62 から下へ（固定位置でスイープ紙の曲面を表現）
+  const floorY = h * 0.62;
+  const floor = ctx.createLinearGradient(0, floorY, 0, h);
   floor.addColorStop(0,    "rgba(0,0,0,0)");
-  floor.addColorStop(0.20, "rgba(0,0,0,0.07)");
-  floor.addColorStop(0.50, "rgba(0,0,0,0.15)");
-  floor.addColorStop(1,    "rgba(0,0,0,0.22)");
+  floor.addColorStop(0.22, "rgba(0,0,0,0.08)");
+  floor.addColorStop(0.55, "rgba(0,0,0,0.17)");
+  floor.addColorStop(1,    "rgba(0,0,0,0.24)");
   ctx.fillStyle = floor;
-  ctx.fillRect(0, transStart, w, h - transStart);
+  ctx.fillRect(0, floorY, w, h - floorY);
 
-  // 4. 左右端の軽いシェーディング（スタジオの壁が画面端で暗くなる）
-  const sideL = ctx.createLinearGradient(0, 0, w * 0.25, 0);
-  sideL.addColorStop(0, "rgba(0,0,0,0.10)");
+  // 4. 左右端シェーディング
+  const sideL = ctx.createLinearGradient(0, 0, w * 0.22, 0);
+  sideL.addColorStop(0, "rgba(0,0,0,0.09)");
   sideL.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideL;
   ctx.fillRect(0, 0, w, h);
 
-  const sideR = ctx.createLinearGradient(w, 0, w * 0.75, 0);
+  const sideR = ctx.createLinearGradient(w, 0, w * 0.78, 0);
   sideR.addColorStop(0, "rgba(0,0,0,0.07)");
   sideR.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = sideR;
   ctx.fillRect(0, 0, w, h);
-}
-
-// ── 影
-// scale変換を使わず ctx.ellipse() で直接描く。
-// scale+filter の組み合わせはブラー半径が変換比率で歪むため廃止。
-function drawShadow(
-  ctx: CanvasRenderingContext2D,
-  centerX: number, seamY: number, scaledW: number
-) {
-  // seamY より上に影がにじまないよう床面にクリップ。
-  // blur をかけると描画領域外にもにじむため、これがないと
-  // 瓶底の半透明エッジから影が透けて「浮いてる」ように見える。
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
-  ctx.clip();
-
-  const fy = seamY + 1;
-
-  // 1. 接地影（瓶底直下・タイト）
-  ctx.save();
-  ctx.filter = "blur(5px)";
-  ctx.beginPath();
-  ctx.ellipse(centerX, fy, scaledW * 0.20, 7, 0, 0, Math.PI * 2);
-  const contact = ctx.createRadialGradient(centerX, fy, 0, centerX, fy, scaledW * 0.20);
-  contact.addColorStop(0,   "rgba(0,0,0,0.50)");
-  contact.addColorStop(0.6, "rgba(0,0,0,0.20)");
-  contact.addColorStop(1,   "rgba(0,0,0,0)");
-  ctx.fillStyle = contact;
-  ctx.fill();
-  ctx.restore();
-
-  // 2. キャストシャドウ（右方向・扁平楕円＋線形グラデ）
-  ctx.save();
-  ctx.filter = "blur(12px)";
-  ctx.beginPath();
-  ctx.ellipse(centerX + scaledW * 0.42, fy + 5, scaledW * 0.75, 14, 0, 0, Math.PI * 2);
-  const castGrad = ctx.createLinearGradient(
-    centerX - scaledW * 0.1, 0,
-    centerX + scaledW * 1.2, 0
-  );
-  castGrad.addColorStop(0,    "rgba(0,0,0,0.30)");
-  castGrad.addColorStop(0.30, "rgba(0,0,0,0.18)");
-  castGrad.addColorStop(0.65, "rgba(0,0,0,0.06)");
-  castGrad.addColorStop(1,    "rgba(0,0,0,0)");
-  ctx.fillStyle = castGrad;
-  ctx.fill();
-  ctx.restore();
-
-  ctx.restore(); // クリップ解除
 }
 
 // ── 画像1枚を処理 ────────────────────────────────────
@@ -174,11 +119,12 @@ async function processImage(item: ImageItem): Promise<string> {
   const scaledW = bw * scale;
   const scaledH = bh * scale;
 
-  // 垂直中央揃え（位置は変えない）
+  // 水平中央・垂直中央
   const destX   = (OUTPUT_W - scaledW) / 2;
   const destY   = (OUTPUT_H - scaledH) / 2;
-  const seamY   = destY + scaledH;  // 瓶底 = 床面
+  const seamY   = destY + scaledH;  // 瓶底 = 床面ライン
   const centerX = OUTPUT_W / 2;
+  const bottleRight = destX + scaledW; // = centerX + scaledW/2
 
   // 最終キャンバス
   const canvas = document.createElement("canvas");
@@ -186,40 +132,46 @@ async function processImage(item: ImageItem): Promise<string> {
   canvas.height = OUTPUT_H;
   const ctx = canvas.getContext("2d")!;
 
-  // 背景（壁・床・境目）
-  drawStudioBackground(ctx, seamY);
+  // 背景（壁・床・境目：固定位置）
+  drawStudioBackground(ctx);
 
-  // キャストシャドウ
-  // 瓶の右端より右・かつ瓶底より下のみに描画することで
-  // 瓶の下には一切影が出ない
-  const bottleRight = destX + scaledW;
+  // ── キャストシャドウ ──────────────────────────────────
+  // 原則：影は「床面のみ」にクリップ（y > seamY）
+  // 瓶を後から描くことで、瓶と重なる影は瓶に隠れる
+  // グラデーションは瓶中央(centerX)から始まり透明→最暗→薄→透明と変化
+  // これにより瓶右側底面から自然に影が伸びる「接地感」が生まれる
   ctx.save();
   ctx.beginPath();
-  ctx.rect(bottleRight - 10, seamY, OUTPUT_W - bottleRight + 10, OUTPUT_H - seamY);
+  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
   ctx.clip();
 
   ctx.save();
   ctx.filter = "blur(16px)";
   ctx.beginPath();
   ctx.ellipse(
-    bottleRight + scaledW * 0.3,  // 中心：瓶右端の少し外
-    seamY + 4,
-    scaledW * 0.65,               // 横半径
-    13,                           // 縦半径（扁平）
+    bottleRight + scaledW * 0.15,  // 中心：瓶右端より少し外側
+    seamY + 5,
+    scaledW * 0.65,                // 横半径（瓶中央〜右端より外まで届く）
+    14,                            // 縦半径（床面に平行な扁平楕円）
     0, 0, Math.PI * 2
   );
-  const castGrad = ctx.createLinearGradient(bottleRight, 0, bottleRight + scaledW * 1.1, 0);
-  castGrad.addColorStop(0,    "rgba(0,0,0,0.30)");
-  castGrad.addColorStop(0.35, "rgba(0,0,0,0.14)");
-  castGrad.addColorStop(0.70, "rgba(0,0,0,0.04)");
-  castGrad.addColorStop(1,    "rgba(0,0,0,0)");
+  // グラデーション：centerX（透明）→ bottleRight 付近（最暗）→ 右（透明）
+  // createLinearGradient の範囲外左側は stop[0] の値になるため
+  // stop[0] = 0 にすることで x < centerX の影は自動的に消える
+  const gradW = bottleRight + scaledW * 0.9;  // グラデーション右端
+  const castGrad = ctx.createLinearGradient(centerX, 0, gradW, 0);
+  castGrad.addColorStop(0,    "rgba(0,0,0,0)");
+  castGrad.addColorStop(0.35, "rgba(0,0,0,0.30)");
+  castGrad.addColorStop(0.55, "rgba(0,0,0,0.15)");
+  castGrad.addColorStop(0.80, "rgba(0,0,0,0.05)");
+  castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 
   ctx.restore(); // クリップ解除
 
-  // 瓶本体
+  // 瓶本体（影の上に描くことで瓶の下の影は隠れる）
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
   return new Promise((resolve) => {
