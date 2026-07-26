@@ -143,7 +143,9 @@ async function processImage(item: ImageItem): Promise<string> {
   const destX   = (OUTPUT_W - scaledW) / 2;
   const destY   = (OUTPUT_H - scaledH) / 2;
   // seamY: maxY（alpha>15）の最下行基準。ガラス底の半透明ピクセルも含む。
-  const seamY   = destY + (maxY - minY) * scale;
+  const seamY      = destY + (maxY - minY) * scale;
+  // visualSeamY: alpha>128 の視覚的な不透明底（影の接地点はここ）
+  const visualSeamY = destY + (visualMaxY - minY) * scale;
   const centerX = OUTPUT_W / 2;
   const bottleRight = destX + scaledW; // = centerX + scaledW/2
 
@@ -161,34 +163,54 @@ async function processImage(item: ImageItem): Promise<string> {
   // 左側の床は影ゼロ。接地感もこの1本で表現。fillRect/別楕円なし。
   const peakFrac = scaledW / (OUTPUT_W - destX);
 
+  // グラデーション座標は 0→OUTPUT_W で定義
+  const fL = destX / OUTPUT_W;
+  const fC = centerX / OUTPUT_W;
+  const fR = bottleRight / OUTPUT_W;
+
+  // ── 影 前半: 床へのキャスト影（瓶を描く前）──
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
-  ctx.clip();
-  ctx.filter = "blur(22px)";
+  ctx.filter = "blur(20px)";
   ctx.beginPath();
   ctx.ellipse(
-    centerX + scaledW * 0.72,   // 中心を瓶右寄りに
-    seamY + 20,
-    (OUTPUT_W - destX) * 0.62,  // 横に広く
-    26,
+    centerX + scaledW * 0.3,
+    visualSeamY,
+    (OUTPUT_W - destX) * 0.68,
+    22,
     0, 0, Math.PI * 2
   );
-  // 左: ゼロ → 瓶右端: ピーク → 右: フェード
-  const shadowGrad = ctx.createLinearGradient(destX, 0, OUTPUT_W, 0);
-  shadowGrad.addColorStop(0,                                "rgba(0,0,0,0)");
-  shadowGrad.addColorStop(Math.max(0.01, peakFrac * 0.55), "rgba(0,0,0,0)");
-  shadowGrad.addColorStop(peakFrac,                         "rgba(0,0,0,0.88)");
-  shadowGrad.addColorStop(Math.min(0.75, peakFrac + 0.26), "rgba(0,0,0,0.55)");
-  shadowGrad.addColorStop(Math.min(0.88, peakFrac + 0.46), "rgba(0,0,0,0.22)");
-  shadowGrad.addColorStop(Math.min(0.96, peakFrac + 0.62), "rgba(0,0,0,0.05)");
-  shadowGrad.addColorStop(1.0,                             "rgba(0,0,0,0)");
+  const shadowGrad = ctx.createLinearGradient(0, 0, OUTPUT_W, 0);
+  shadowGrad.addColorStop(0,                          "rgba(0,0,0,0)");
+  shadowGrad.addColorStop(fL,                         "rgba(0,0,0,0)");
+  shadowGrad.addColorStop(fC,                         "rgba(0,0,0,0.22)");
+  shadowGrad.addColorStop(fR,                         "rgba(0,0,0,0.85)");
+  shadowGrad.addColorStop(Math.min(0.90, fR + 0.16), "rgba(0,0,0,0.42)");
+  shadowGrad.addColorStop(Math.min(0.96, fR + 0.28), "rgba(0,0,0,0.12)");
+  shadowGrad.addColorStop(1.0,                        "rgba(0,0,0,0)");
   ctx.fillStyle = shadowGrad;
   ctx.fill();
   ctx.restore();
 
   // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
+
+  // ── 影 後半: 透明ガラス底の暗化（multiply）──
+  // アンバーガラスの半透明底（α<128）が明るい背景を透かして「浮き」に見えるのを補正。
+  // multiply blend: 明るいガラスは暗化、不透明な瓶本体はほぼ影響なし。
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  ctx.filter = "blur(18px)";
+  ctx.beginPath();
+  ctx.ellipse(
+    centerX + scaledW * 0.06,
+    visualSeamY - 20,          // 上に移動して透明ガラス領域をカバー
+    scaledW * 0.46,
+    42,                         // ry大きく（透明ガラス上端まで届かせる）
+    0, 0, Math.PI * 2
+  );
+  ctx.fillStyle = "rgba(48,50,60,0.85)";
+  ctx.fill();
+  ctx.restore();
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
