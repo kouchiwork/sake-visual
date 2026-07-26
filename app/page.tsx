@@ -37,11 +37,10 @@ function getBoundingBox(imageData: ImageData) {
 }
 
 // ── スタジオ背景
-// 壁→床の遷移は瓶位置に依存しない固定位置（参考画像から計測: h*0.62）
-function drawStudioBackground(ctx: CanvasRenderingContext2D) {
+// seamY: 瓶底Y座標。壁→床の遷移をその少し上（約50px）に配置。
+function drawStudioBackground(ctx: CanvasRenderingContext2D, seamY: number) {
   const w = OUTPUT_W, h = OUTPUT_H;
-
-  const floorY = h * 0.62;
+  const floorY = seamY - 55; // 瓶底より少し上を境界とする
 
   // 1. ベース壁面（全体を少し明るく）
   ctx.fillStyle = "#a8aaac";
@@ -150,8 +149,8 @@ async function processImage(item: ImageItem): Promise<string> {
   canvas.height = OUTPUT_H;
   const ctx = canvas.getContext("2d")!;
 
-  // 背景（壁・床・境目：固定位置）
-  drawStudioBackground(ctx);
+  // 背景（壁・床・境目：seamY基準）
+  drawStudioBackground(ctx, seamY);
 
   // ── キャストシャドウ ──────────────────────────────────
   // クリップ一切なし。影の中心を seamY に置き、瓶を後から描く。
@@ -159,27 +158,39 @@ async function processImage(item: ImageItem): Promise<string> {
   // ・瓶底の半透明エッジ → 影と自然にブレンド → これが「接地感」の正体
   // ・床面（seamY 以下） → 影がそのまま表示 → 右に伸びるキャストシャドウ
   // y クリップすると瓶底と影の間に隙間が生まれ「浮き」の原因になる
+  // 楕円の「頂点」を seamY に合わせ、中心を seamY + shadowVR にする。
+  // これにより:
+  //   seamY より上: 影がほぼ出ない（ブラーの極少量にじみのみ → 瓶底と自然融合）
+  //   seamY より下: 縦半径分の高さを持つ影 → 切れない・奥行きがある
+  // 楕円の「頂点」を seamY に合わせる設計:
+  //   center Y = seamY + shadowVR  →  top of ellipse = seamY
+  //   seamY より上: ブラーの極少量にじみのみ（瓶底と自然融合）
+  //   seamY より下: shadowVR の高さをもつ実体ある影
+  const shadowVR = scaledW * 0.28;  // 縦半径（高さ）
+  const shadowHR = scaledW * 1.30;  // 横半径（より長く）
+  const gradEnd  = OUTPUT_W - 8;    // キャンバス右端で透明に
+
+  // グラデーション峰を bottleRight に動的に合わせる
+  const peakFrac = Math.min((bottleRight - destX) / (gradEnd - destX), 0.90);
+
   ctx.save();
-  ctx.filter = "blur(13px)";
+  ctx.filter = "blur(16px)";
   ctx.beginPath();
   ctx.ellipse(
-    bottleRight,        // 中心X：瓶右端
-    seamY,              // 中心Y：床面ライン
-    scaledW * 1.25,     // 横半径を大きく拡大（影を長く伸ばす）
-    11,                 // 縦半径：扁平
+    bottleRight,           // 中心X: 瓶右端
+    seamY + shadowVR,      // 中心Y: 楕円上端が seamY になる
+    shadowHR,
+    shadowVR,
     0, 0, Math.PI * 2
   );
-  // 瓶左端（透明）→ 瓶右端付近（最暗）→ 遠方まで長く（透明）
-  const castGrad = ctx.createLinearGradient(
-    destX, 0,                        // 瓶左端：透明開始
-    bottleRight + scaledW * 2.2, 0   // 右へ大きく延長
-  );
-  castGrad.addColorStop(0,    "rgba(0,0,0,0)");
-  castGrad.addColorStop(0.28, "rgba(0,0,0,0.32)");
-  castGrad.addColorStop(0.50, "rgba(0,0,0,0.16)");
-  castGrad.addColorStop(0.72, "rgba(0,0,0,0.06)");
-  castGrad.addColorStop(0.88, "rgba(0,0,0,0.02)");
-  castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
+  const castGrad = ctx.createLinearGradient(destX, 0, gradEnd, 0);
+  castGrad.addColorStop(0,                              "rgba(0,0,0,0)");
+  castGrad.addColorStop(peakFrac * 0.78,                "rgba(0,0,0,0.24)");
+  castGrad.addColorStop(peakFrac,                       "rgba(0,0,0,0.42)"); // 濃く
+  castGrad.addColorStop(Math.min(peakFrac + 0.10, 0.94),"rgba(0,0,0,0.26)");
+  castGrad.addColorStop(Math.min(peakFrac + 0.22, 0.97),"rgba(0,0,0,0.10)");
+  castGrad.addColorStop(Math.min(peakFrac + 0.34, 0.99),"rgba(0,0,0,0.03)");
+  castGrad.addColorStop(1.0,                            "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
