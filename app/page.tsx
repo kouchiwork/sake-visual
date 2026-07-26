@@ -136,42 +136,37 @@ async function processImage(item: ImageItem): Promise<string> {
   drawStudioBackground(ctx);
 
   // ── キャストシャドウ ──────────────────────────────────
-  // 原則：影は「床面のみ」にクリップ（y > seamY）
-  // 瓶を後から描くことで、瓶と重なる影は瓶に隠れる
-  // グラデーションは瓶中央(centerX)から始まり透明→最暗→薄→透明と変化
-  // これにより瓶右側底面から自然に影が伸びる「接地感」が生まれる
+  // クリップ一切なし。影の中心を seamY に置き、瓶を後から描く。
+  // ・瓶の不透明部分 → 上から覆って隠される（影は見えない）
+  // ・瓶底の半透明エッジ → 影と自然にブレンド → これが「接地感」の正体
+  // ・床面（seamY 以下） → 影がそのまま表示 → 右に伸びるキャストシャドウ
+  // y クリップすると瓶底と影の間に隙間が生まれ「浮き」の原因になる
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
-  ctx.clip();
-
-  ctx.save();
-  ctx.filter = "blur(16px)";
+  ctx.filter = "blur(14px)";
   ctx.beginPath();
   ctx.ellipse(
-    bottleRight + scaledW * 0.15,  // 中心：瓶右端より少し外側
-    seamY + 5,
-    scaledW * 0.65,                // 横半径（瓶中央〜右端より外まで届く）
-    14,                            // 縦半径（床面に平行な扁平楕円）
+    bottleRight,        // 中心X：瓶右端（ここが最暗部・影の起点）
+    seamY,              // 中心Y：床面ライン上（ブラーが上下に広がる）
+    scaledW * 0.78,     // 横半径：瓶左端付近〜右外まで届く広い楕円
+    11,                 // 縦半径：床面に貼り付いた扁平な楕円
     0, 0, Math.PI * 2
   );
-  // グラデーション：centerX（透明）→ bottleRight 付近（最暗）→ 右（透明）
-  // createLinearGradient の範囲外左側は stop[0] の値になるため
-  // stop[0] = 0 にすることで x < centerX の影は自動的に消える
-  const gradW = bottleRight + scaledW * 0.9;  // グラデーション右端
-  const castGrad = ctx.createLinearGradient(centerX, 0, gradW, 0);
+  // グラデーション：瓶左端（透明）→ 瓶右端付近（最暗）→ 右遠方（透明）
+  // 左側が透明になることで瓶の左側の床に影が漏れない
+  const castGrad = ctx.createLinearGradient(
+    destX, 0,                        // 瓶左端：ここから透明
+    bottleRight + scaledW * 1.15, 0  // 右端：ここで透明に戻る
+  );
   castGrad.addColorStop(0,    "rgba(0,0,0,0)");
-  castGrad.addColorStop(0.35, "rgba(0,0,0,0.30)");
-  castGrad.addColorStop(0.55, "rgba(0,0,0,0.15)");
-  castGrad.addColorStop(0.80, "rgba(0,0,0,0.05)");
+  castGrad.addColorStop(0.36, "rgba(0,0,0,0.32)");
+  castGrad.addColorStop(0.58, "rgba(0,0,0,0.15)");
+  castGrad.addColorStop(0.80, "rgba(0,0,0,0.04)");
   castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 
-  ctx.restore(); // クリップ解除
-
-  // 瓶本体（影の上に描くことで瓶の下の影は隠れる）
+  // 瓶本体：影の後に描くことで影の「瓶エリア部分」を自然に隠す
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
   return new Promise((resolve) => {
