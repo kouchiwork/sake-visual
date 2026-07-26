@@ -156,49 +156,39 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目：seamY基準）
   drawStudioBackground(ctx, seamY);
 
-  // ── 床面影（seamY以下クリップ）────────────────────────
-  // 楕円中心をseamYに置き、クリップで下半分だけ表示することで
-  // 床面との接触点からすぐ影が始まるようにする。
+  // ── 影（右方向のみ・1本）─────────────────────────────
+  // 参考画像: 瓶底から右にのみ伸びる1本の自然な影。
+  // 左側の床は影ゼロ。接地感もこの1本で表現。fillRect/別楕円なし。
   const peakFrac = scaledW / (OUTPUT_W - destX);
-  const shadowRY = 26;
 
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, seamY, OUTPUT_W, OUTPUT_H - seamY);
   ctx.clip();
-  ctx.filter = "blur(18px)";
+  ctx.filter = "blur(22px)";
   ctx.beginPath();
-  ctx.ellipse(centerX + scaledW * 0.20, seamY, scaledW * 1.55, shadowRY, 0, 0, Math.PI * 2);
-  const floorGrad = ctx.createLinearGradient(destX - scaledW * 0.3, 0, OUTPUT_W, 0);
-  floorGrad.addColorStop(0,                                          "rgba(0,0,0,0.30)");
-  floorGrad.addColorStop(Math.max(0.08, peakFrac - 0.10),            "rgba(0,0,0,0.70)");
-  floorGrad.addColorStop(Math.min(0.88, peakFrac + 0.05),            "rgba(0,0,0,0.80)");
-  floorGrad.addColorStop(Math.min(0.93, peakFrac + 0.22),            "rgba(0,0,0,0.48)");
-  floorGrad.addColorStop(Math.min(0.96, peakFrac + 0.40),            "rgba(0,0,0,0.18)");
-  floorGrad.addColorStop(Math.min(0.99, peakFrac + 0.56),            "rgba(0,0,0,0.04)");
-  floorGrad.addColorStop(1.0,                                        "rgba(0,0,0,0)");
-  ctx.fillStyle = floorGrad;
+  ctx.ellipse(
+    centerX + scaledW * 0.72,   // 中心を瓶右寄りに
+    seamY + 20,
+    (OUTPUT_W - destX) * 0.62,  // 横に広く
+    26,
+    0, 0, Math.PI * 2
+  );
+  // 左: ゼロ → 瓶右端: ピーク → 右: フェード
+  const shadowGrad = ctx.createLinearGradient(destX, 0, OUTPUT_W, 0);
+  shadowGrad.addColorStop(0,                                "rgba(0,0,0,0)");
+  shadowGrad.addColorStop(Math.max(0.01, peakFrac * 0.55), "rgba(0,0,0,0)");
+  shadowGrad.addColorStop(peakFrac,                         "rgba(0,0,0,0.88)");
+  shadowGrad.addColorStop(Math.min(0.75, peakFrac + 0.26), "rgba(0,0,0,0.55)");
+  shadowGrad.addColorStop(Math.min(0.88, peakFrac + 0.46), "rgba(0,0,0,0.22)");
+  shadowGrad.addColorStop(Math.min(0.96, peakFrac + 0.62), "rgba(0,0,0,0.05)");
+  shadowGrad.addColorStop(1.0,                             "rgba(0,0,0,0)");
+  ctx.fillStyle = shadowGrad;
   ctx.fill();
   ctx.restore();
 
   // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
-
-  // ── 接地暗化（瓶の後）─────────────────────────────────
-  // seamYの上下20pxを暗くして、半透明ガラス底と床の境界を消す。
-  // blur=12px で瓶底ハロー（半透明pixel＋床）を覆う。
-  const lineGrad = ctx.createLinearGradient(destX - scaledW * 0.05, 0, bottleRight + scaledW * 0.45, 0);
-  lineGrad.addColorStop(0,    "rgba(0,0,0,0)");
-  lineGrad.addColorStop(0.06, "rgba(0,0,0,0.65)");
-  lineGrad.addColorStop(0.30, "rgba(0,0,0,0.95)");
-  lineGrad.addColorStop(0.60, "rgba(0,0,0,0.95)");
-  lineGrad.addColorStop(0.82, "rgba(0,0,0,0.65)");
-  lineGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
-  ctx.save();
-  ctx.filter = "blur(12px)";
-  ctx.fillStyle = lineGrad;
-  ctx.fillRect(destX - scaledW * 0.05, seamY - 20, scaledW * 1.5, 26);
-  ctx.restore();
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
