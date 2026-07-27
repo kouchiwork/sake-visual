@@ -176,45 +176,60 @@ async function processImage(item: ImageItem): Promise<string> {
   ctx.save();
   ctx.filter = "blur(14px)";
   ctx.beginPath();
-  ctx.ellipse(shCX, seamY + 2, shRx, 10, 0, 0, Math.PI * 2);
+  ctx.ellipse(shCX, seamY + 2, shRx, 18, 0, 0, Math.PI * 2);
   const castGrad = ctx.createLinearGradient(shX1, 0, shX2, 0);
-  castGrad.addColorStop(0,    "rgba(0,0,0,0.85)");
-  castGrad.addColorStop(0.25, "rgba(0,0,0,0.60)");
-  castGrad.addColorStop(0.55, "rgba(0,0,0,0.32)");
-  castGrad.addColorStop(0.80, "rgba(0,0,0,0.12)");
+  castGrad.addColorStop(0,    "rgba(0,0,0,0.95)");
+  castGrad.addColorStop(0.20, "rgba(0,0,0,0.75)");
+  castGrad.addColorStop(0.45, "rgba(0,0,0,0.50)");
+  castGrad.addColorStop(0.70, "rgba(0,0,0,0.25)");
   castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 
-  // 瓶本体（まずオフスクリーンで描いてラベル下ガラスだけ暗化する）
-  // オフスクリーンcanvas: 透明背景に瓶だけ描く
+  // 瓶本体をオフスクリーンに描く（背景除去済み画像をそのまま配置）
   const offscreen = document.createElement("canvas");
   offscreen.width  = OUTPUT_W;
   offscreen.height = OUTPUT_H;
   const offCtx = offscreen.getContext("2d")!;
   offCtx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
-  // ラベル下のガラス部分だけ暗化（source-atop = 瓶シルエット内ピクセルのみ）
-  const glassTop = visualSeamY - 20;  // ラベル下端のすぐ下から
-  const glassH   = seamY - glassTop + 30;
-  offCtx.save();
-  offCtx.beginPath();
-  offCtx.rect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
-  offCtx.clip();
-  offCtx.globalCompositeOperation = "source-atop";
-  const darkGrad = offCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
-  darkGrad.addColorStop(0,    "rgba(0,0,0,0)");
-  darkGrad.addColorStop(0.10, "rgba(0,0,0,0.55)");
-  darkGrad.addColorStop(0.35, "rgba(0,0,0,0.80)");
-  darkGrad.addColorStop(0.65, "rgba(0,0,0,0.92)");
-  darkGrad.addColorStop(1.0,  "rgba(0,0,0,0.97)");
-  offCtx.fillStyle = darkGrad;
-  offCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
-  offCtx.restore();
-
-  // オフスクリーンをメインcanvasに合成
+  // オフスクリーンをメインcanvasに合成（瓶を背景の上に描く）
   ctx.drawImage(offscreen, 0, 0);
+
+  // ── ガラス暗化（ラベルより下の瓶底部分）──────────────────
+  // 瓶をキャンバスに合成した後でオーバーレイする方式：
+  // 合成済みピクセル（背景+瓶）に対してdark layerを乗せることで
+  // 半透明ガラスが背景を透かしていても確実に暗化できる。
+  // destination-inでoffscreenのシルエットに切り抜き → 瓶の外を汚染しない。
+  // 瓶高さの73%地点からラベル下ガラス部分と見なす（bottle-height比率方式）
+  const bottleH = seamY - destY;
+  const glassTop = Math.round(destY + bottleH * 0.90);
+  const glassH   = seamY - glassTop + 20;
+  if (glassH > 0) {
+    const glassLayer = document.createElement("canvas");
+    glassLayer.width  = OUTPUT_W;
+    glassLayer.height = OUTPUT_H;
+    const glCtx = glassLayer.getContext("2d")!;
+
+    // 暗化グラデーションを描く（上端をなだらかに）
+    const darkGrad = glCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
+    darkGrad.addColorStop(0,    "rgba(0,0,0,0)");
+    darkGrad.addColorStop(0.15, "rgba(0,0,0,0.60)");
+    darkGrad.addColorStop(0.40, "rgba(0,0,0,0.88)");
+    darkGrad.addColorStop(0.70, "rgba(0,0,0,0.96)");
+    darkGrad.addColorStop(1.0,  "rgba(0,0,0,0.99)");
+    glCtx.fillStyle = darkGrad;
+    glCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
+
+    // 瓶シルエットで切り抜き（背景汚染防止）
+    glCtx.globalCompositeOperation = "destination-in";
+    glCtx.drawImage(offscreen, 0, 0);
+
+    // 暗化レイヤーをメインcanvasに2パス上書き
+    ctx.drawImage(glassLayer, 0, 0);
+    ctx.drawImage(glassLayer, 0, 0);
+  }
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
