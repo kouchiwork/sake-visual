@@ -5,8 +5,8 @@ import { useState, useCallback, useRef } from "react";
 // ── 出力設定 ──────────────────────────────────────────
 const OUTPUT_W = 800;
 const OUTPUT_H = 1000;
-const BOTTLE_MAX_H_RATIO = 0.68;
-const BOTTLE_MAX_W_RATIO = 0.46;
+const BOTTLE_MAX_H_RATIO = 0.80;
+const BOTTLE_MAX_W_RATIO = 0.52;
 
 // ── 型 ────────────────────────────────────────────────
 type ImageItem = {
@@ -159,28 +159,28 @@ async function processImage(item: ImageItem): Promise<string> {
   drawStudioBackground(ctx, seamY);
 
   // ── 床影（瓶を描く前に描画）─────────────────────────────
-  // コンタクト影: 瓶底直下の暗い楕円（接地感）
+  // コンタクト影: 瓶底直下（強め）
   ctx.save();
-  ctx.filter = "blur(10px)";
+  ctx.filter = "blur(8px)";
   ctx.beginPath();
-  ctx.ellipse(centerX, seamY, scaledW * 0.44, 14, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.ellipse(centerX, seamY + 2, scaledW * 0.46, 18, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0,0,0,0.75)";
   ctx.fill();
   ctx.restore();
 
-  // 投射影: 瓶底右端から右方向へ長く伸びる（左上光源）
-  const shX1 = centerX;
-  const shX2 = OUTPUT_W * 0.94;
+  // 投射影: 右方向へ長く伸びる
+  const shX1 = destX + scaledW * 0.3;
+  const shX2 = OUTPUT_W * 0.95;
   const shCX = (shX1 + shX2) / 2;
   const shRx = (shX2 - shX1) / 2;
   ctx.save();
-  ctx.filter = "blur(16px)";
+  ctx.filter = "blur(14px)";
   ctx.beginPath();
-  ctx.ellipse(shCX, seamY + 2, shRx, 20, 0, 0, Math.PI * 2);
+  ctx.ellipse(shCX, seamY + 4, shRx, 22, 0, 0, Math.PI * 2);
   const castGrad = ctx.createLinearGradient(shX1, 0, shX2, 0);
-  castGrad.addColorStop(0,    "rgba(0,0,0,0.52)");
-  castGrad.addColorStop(0.30, "rgba(0,0,0,0.32)");
-  castGrad.addColorStop(0.60, "rgba(0,0,0,0.14)");
+  castGrad.addColorStop(0,    "rgba(0,0,0,0.65)");
+  castGrad.addColorStop(0.25, "rgba(0,0,0,0.42)");
+  castGrad.addColorStop(0.55, "rgba(0,0,0,0.20)");
   castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
@@ -195,18 +195,19 @@ async function processImage(item: ImageItem): Promise<string> {
   offCtx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
   // ラベル下のガラス部分だけ暗化（source-atop = 瓶シルエット内ピクセルのみ）
-  const glassTop = visualSeamY - 30;  // ラベル下端のすぐ下から
-  const glassH   = seamY - glassTop + 20;
+  const glassTop = visualSeamY - 20;  // ラベル下端のすぐ下から
+  const glassH   = seamY - glassTop + 30;
   offCtx.save();
   offCtx.beginPath();
   offCtx.rect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
   offCtx.clip();
   offCtx.globalCompositeOperation = "source-atop";
   const darkGrad = offCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
-  darkGrad.addColorStop(0,    "rgba(0,0,0,0)");     // ラベル直下: 変化なし
-  darkGrad.addColorStop(0.15, "rgba(0,0,0,0.18)");  // 暗化開始
-  darkGrad.addColorStop(0.50, "rgba(0,0,0,0.45)");  // 中間
-  darkGrad.addColorStop(1.0,  "rgba(0,0,0,0.65)");  // 最暗（瓶底）
+  darkGrad.addColorStop(0,    "rgba(0,0,0,0)");
+  darkGrad.addColorStop(0.12, "rgba(0,0,0,0.35)");
+  darkGrad.addColorStop(0.40, "rgba(0,0,0,0.65)");
+  darkGrad.addColorStop(0.75, "rgba(0,0,0,0.82)");
+  darkGrad.addColorStop(1.0,  "rgba(0,0,0,0.90)");
   offCtx.fillStyle = darkGrad;
   offCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
   offCtx.restore();
