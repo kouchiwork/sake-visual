@@ -215,9 +215,9 @@ async function processImage(item: ImageItem): Promise<string> {
     // 暗化グラデーション（素材色を自然に少し暗くする程度）
     const darkGrad = glCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
     darkGrad.addColorStop(0,    "rgba(30,15,5,0)");
-    darkGrad.addColorStop(0.30, "rgba(30,15,5,0.12)");
-    darkGrad.addColorStop(0.65, "rgba(30,15,5,0.22)");
-    darkGrad.addColorStop(1.0,  "rgba(30,15,5,0.30)");
+    darkGrad.addColorStop(0.25, "rgba(30,15,5,0.30)");
+    darkGrad.addColorStop(0.55, "rgba(30,15,5,0.45)");
+    darkGrad.addColorStop(1.0,  "rgba(30,15,5,0.55)");
     glCtx.fillStyle = darkGrad;
     glCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
 
