@@ -158,56 +158,61 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目：seamY基準）
   drawStudioBackground(ctx, seamY);
 
-  // ── 影 ──────────────────────────────────────────────────────
-  // 左上光源: 投射影は瓶底右側から右方向のみ。
-  const fR = bottleRight / OUTPUT_W;
-  const fC = centerX / OUTPUT_W;
-
-  // [1] 投射影: 瓶右端から右方向へ伸びる（瓶を描く前）
-  const castCX = bottleRight + (OUTPUT_W - bottleRight) * 0.48;
-  const castRx = OUTPUT_W - centerX;
-
+  // ── 床影（瓶を描く前に描画）─────────────────────────────
+  // コンタクト影: 瓶底直下の暗い楕円（接地感）
   ctx.save();
-  ctx.filter = "blur(20px)";
+  ctx.filter = "blur(10px)";
   ctx.beginPath();
-  ctx.ellipse(castCX, visualSeamY + 4, castRx, 16, 0, 0, Math.PI * 2);
-  const castGrad = ctx.createLinearGradient(0, 0, OUTPUT_W, 0);
-  castGrad.addColorStop(0,                          "rgba(0,0,0,0)");
-  castGrad.addColorStop(fC,                         "rgba(0,0,0,0)");
-  castGrad.addColorStop(fR,                         "rgba(0,0,0,0.88)");
-  castGrad.addColorStop(Math.min(0.88, fR + 0.18), "rgba(0,0,0,0.50)");
-  castGrad.addColorStop(Math.min(0.96, fR + 0.32), "rgba(0,0,0,0.14)");
-  castGrad.addColorStop(1.0,                        "rgba(0,0,0,0)");
+  ctx.ellipse(centerX, seamY, scaledW * 0.44, 14, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fill();
+  ctx.restore();
+
+  // 投射影: 瓶底右端から右方向へ長く伸びる（左上光源）
+  const shX1 = centerX;
+  const shX2 = OUTPUT_W * 0.94;
+  const shCX = (shX1 + shX2) / 2;
+  const shRx = (shX2 - shX1) / 2;
+  ctx.save();
+  ctx.filter = "blur(16px)";
+  ctx.beginPath();
+  ctx.ellipse(shCX, seamY + 2, shRx, 20, 0, 0, Math.PI * 2);
+  const castGrad = ctx.createLinearGradient(shX1, 0, shX2, 0);
+  castGrad.addColorStop(0,    "rgba(0,0,0,0.52)");
+  castGrad.addColorStop(0.30, "rgba(0,0,0,0.32)");
+  castGrad.addColorStop(0.60, "rgba(0,0,0,0.14)");
+  castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
   ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 
-  // 瓶本体
-  ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
+  // 瓶本体（まずオフスクリーンで描いてラベル下ガラスだけ暗化する）
+  // オフスクリーンcanvas: 透明背景に瓶だけ描く
+  const offscreen = document.createElement("canvas");
+  offscreen.width  = OUTPUT_W;
+  offscreen.height = OUTPUT_H;
+  const offCtx = offscreen.getContext("2d")!;
+  offCtx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
-  // [2] 瓶底ガラスの multiply 暗化（ラベル下のガラスゾーンのみ clip）
-  //   glassTop = visualSeamY - 100: ラベル下端より上から clip 開始。
-  //   グラデーションの最初 20% は alpha=0 → ラベル下端を保護。
-  //   20-30% で急激に立ち上げ → アンバーガラス暗化開始。
-  const glassTop = visualSeamY - 100;
-  const glassH   = seamY - glassTop + 15;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(destX - 5, Math.floor(glassTop), scaledW + 10, Math.ceil(glassH));
-  ctx.clip();
-  ctx.globalCompositeOperation = "multiply";
-  // alpha<1 では multiply が不安定なため完全不透明（alpha=1）で色をグラデーション。
-  // white(255)×Cb = Cb（変化なし） → ラベルゾーン保護。
-  // gray×Cb = 暗化 → アンバーガラスゾーン。
-  const darkGrad = ctx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
-  darkGrad.addColorStop(0,    "rgb(255,255,255)");  // ラベル上端: 変化なし
-  darkGrad.addColorStop(0.10, "rgb(255,255,255)");  // ラベル下端まで(~y750): 変化なし
-  darkGrad.addColorStop(0.35, "rgb(145,145,155)");  // アンバーガラス暗化開始(~y769)
-  darkGrad.addColorStop(0.65, "rgb(100,100,110)");  // 強い暗化
-  darkGrad.addColorStop(1.0,  "rgb(75,75,85)");     // 最暗（瓶底）
-  ctx.fillStyle = darkGrad;
-  ctx.fillRect(destX - 5, Math.floor(glassTop), scaledW + 10, Math.ceil(glassH));
-  ctx.restore();
+  // ラベル下のガラス部分だけ暗化（source-atop = 瓶シルエット内ピクセルのみ）
+  const glassTop = visualSeamY - 30;  // ラベル下端のすぐ下から
+  const glassH   = seamY - glassTop + 20;
+  offCtx.save();
+  offCtx.beginPath();
+  offCtx.rect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
+  offCtx.clip();
+  offCtx.globalCompositeOperation = "source-atop";
+  const darkGrad = offCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
+  darkGrad.addColorStop(0,    "rgba(0,0,0,0)");     // ラベル直下: 変化なし
+  darkGrad.addColorStop(0.15, "rgba(0,0,0,0.18)");  // 暗化開始
+  darkGrad.addColorStop(0.50, "rgba(0,0,0,0.45)");  // 中間
+  darkGrad.addColorStop(1.0,  "rgba(0,0,0,0.65)");  // 最暗（瓶底）
+  offCtx.fillStyle = darkGrad;
+  offCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
+  offCtx.restore();
+
+  // オフスクリーンをメインcanvasに合成
+  ctx.drawImage(offscreen, 0, 0);
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
