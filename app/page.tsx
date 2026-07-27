@@ -198,13 +198,25 @@ async function processImage(item: ImageItem): Promise<string> {
   ctx.drawImage(offscreen, 0, 0);
 
   // ── ガラス暗化（ラベルより下の瓶底部分）──────────────────
-  // 瓶をキャンバスに合成した後でオーバーレイする方式：
-  // 合成済みピクセル（背景+瓶）に対してdark layerを乗せることで
-  // 半透明ガラスが背景を透かしていても確実に暗化できる。
-  // destination-inでoffscreenのシルエットに切り抜き → 瓶の外を汚染しない。
-  // 瓶高さの73%地点からラベル下ガラス部分と見なす（bottle-height比率方式）
-  const bottleH = seamY - destY;
-  const glassTop = Math.round(destY + bottleH * 0.90);
+  // ラベル下端をピクセル色で検出：白いピクセル(R,G,B>200)の最下行を探す
+  const offPixels = offCtx.getImageData(0, 0, OUTPUT_W, OUTPUT_H);
+  const pd = offPixels.data;
+  const scanCX = Math.round(destX + scaledW * 0.5);
+  const scanHalf = Math.round(scaledW * 0.25);
+  let labelBottomY = destY;
+  for (let y = destY; y < seamY; y++) {
+    let whiteCount = 0, opaqueCount = 0;
+    for (let x = scanCX - scanHalf; x <= scanCX + scanHalf; x++) {
+      const i = (y * OUTPUT_W + x) * 4;
+      const a = pd[i + 3];
+      if (a > 50) {
+        opaqueCount++;
+        if (pd[i] > 200 && pd[i + 1] > 200 && pd[i + 2] > 200) whiteCount++;
+      }
+    }
+    if (opaqueCount > 0 && whiteCount / opaqueCount > 0.45) labelBottomY = y;
+  }
+  const glassTop = labelBottomY + 8;  // ラベル下端より8px下から
   const glassH   = seamY - glassTop + 20;
   if (glassH > 0) {
     const glassLayer = document.createElement("canvas");
