@@ -212,13 +212,12 @@ async function processImage(item: ImageItem): Promise<string> {
     glassLayer.height = OUTPUT_H;
     const glCtx = glassLayer.getContext("2d")!;
 
-    // 暗化グラデーションを描く（上端をなだらかに）
+    // 暗化グラデーション（素材色を自然に少し暗くする程度）
     const darkGrad = glCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
-    darkGrad.addColorStop(0,    "rgba(0,0,0,0)");
-    darkGrad.addColorStop(0.15, "rgba(0,0,0,0.60)");
-    darkGrad.addColorStop(0.40, "rgba(0,0,0,0.88)");
-    darkGrad.addColorStop(0.70, "rgba(0,0,0,0.96)");
-    darkGrad.addColorStop(1.0,  "rgba(0,0,0,0.99)");
+    darkGrad.addColorStop(0,    "rgba(30,15,5,0)");
+    darkGrad.addColorStop(0.30, "rgba(30,15,5,0.12)");
+    darkGrad.addColorStop(0.65, "rgba(30,15,5,0.22)");
+    darkGrad.addColorStop(1.0,  "rgba(30,15,5,0.30)");
     glCtx.fillStyle = darkGrad;
     glCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
 
@@ -226,8 +225,7 @@ async function processImage(item: ImageItem): Promise<string> {
     glCtx.globalCompositeOperation = "destination-in";
     glCtx.drawImage(offscreen, 0, 0);
 
-    // 暗化レイヤーをメインcanvasに2パス上書き
-    ctx.drawImage(glassLayer, 0, 0);
+    // 暗化レイヤーをメインcanvasに合成（1パス）
     ctx.drawImage(glassLayer, 0, 0);
   }
 
