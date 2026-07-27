@@ -158,58 +158,55 @@ async function processImage(item: ImageItem): Promise<string> {
   // 背景（壁・床・境目：seamY基準）
   drawStudioBackground(ctx, seamY);
 
-  // ── 影（右方向のみ・1本）─────────────────────────────
-  // 参考画像: 瓶底から右にのみ伸びる1本の自然な影。
-  // 左側の床は影ゼロ。接地感もこの1本で表現。fillRect/別楕円なし。
-  const peakFrac = scaledW / (OUTPUT_W - destX);
-
-  // グラデーション座標は 0→OUTPUT_W で定義
-  const fL = destX / OUTPUT_W;
-  const fC = centerX / OUTPUT_W;
+  // ── 影 ──────────────────────────────────────────────────────
+  // 左上光源: 投射影は瓶底右側から右方向のみ。
   const fR = bottleRight / OUTPUT_W;
+  const fC = centerX / OUTPUT_W;
 
-  // ── 影 前半: 床へのキャスト影（瓶を描く前）──
+  // [1] 投射影: 瓶右端から右方向へ伸びる（瓶を描く前）
+  const castCX = bottleRight + (OUTPUT_W - bottleRight) * 0.48;
+  const castRx = OUTPUT_W - centerX;
+
   ctx.save();
   ctx.filter = "blur(20px)";
   ctx.beginPath();
-  ctx.ellipse(
-    centerX + scaledW * 0.3,
-    visualSeamY,
-    (OUTPUT_W - destX) * 0.68,
-    22,
-    0, 0, Math.PI * 2
-  );
-  const shadowGrad = ctx.createLinearGradient(0, 0, OUTPUT_W, 0);
-  shadowGrad.addColorStop(0,                          "rgba(0,0,0,0)");
-  shadowGrad.addColorStop(fL,                         "rgba(0,0,0,0)");
-  shadowGrad.addColorStop(fC,                         "rgba(0,0,0,0.22)");
-  shadowGrad.addColorStop(fR,                         "rgba(0,0,0,0.85)");
-  shadowGrad.addColorStop(Math.min(0.90, fR + 0.16), "rgba(0,0,0,0.42)");
-  shadowGrad.addColorStop(Math.min(0.96, fR + 0.28), "rgba(0,0,0,0.12)");
-  shadowGrad.addColorStop(1.0,                        "rgba(0,0,0,0)");
-  ctx.fillStyle = shadowGrad;
+  ctx.ellipse(castCX, visualSeamY + 4, castRx, 16, 0, 0, Math.PI * 2);
+  const castGrad = ctx.createLinearGradient(0, 0, OUTPUT_W, 0);
+  castGrad.addColorStop(0,                          "rgba(0,0,0,0)");
+  castGrad.addColorStop(fC,                         "rgba(0,0,0,0)");
+  castGrad.addColorStop(fR,                         "rgba(0,0,0,0.88)");
+  castGrad.addColorStop(Math.min(0.88, fR + 0.18), "rgba(0,0,0,0.50)");
+  castGrad.addColorStop(Math.min(0.96, fR + 0.32), "rgba(0,0,0,0.14)");
+  castGrad.addColorStop(1.0,                        "rgba(0,0,0,0)");
+  ctx.fillStyle = castGrad;
   ctx.fill();
   ctx.restore();
 
   // 瓶本体
   ctx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
 
-  // ── 影 後半: 透明ガラス底の暗化（multiply）──
-  // アンバーガラスの半透明底（α<128）が明るい背景を透かして「浮き」に見えるのを補正。
-  // multiply blend: 明るいガラスは暗化、不透明な瓶本体はほぼ影響なし。
+  // [2] 瓶底ガラスの multiply 暗化（ラベル下のガラスゾーンのみ clip）
+  //   glassTop = visualSeamY - 100: ラベル下端より上から clip 開始。
+  //   グラデーションの最初 20% は alpha=0 → ラベル下端を保護。
+  //   20-30% で急激に立ち上げ → アンバーガラス暗化開始。
+  const glassTop = visualSeamY - 100;
+  const glassH   = seamY - glassTop + 15;
   ctx.save();
-  ctx.globalCompositeOperation = "multiply";
-  ctx.filter = "blur(18px)";
   ctx.beginPath();
-  ctx.ellipse(
-    centerX + scaledW * 0.06,
-    visualSeamY - 20,          // 上に移動して透明ガラス領域をカバー
-    scaledW * 0.46,
-    42,                         // ry大きく（透明ガラス上端まで届かせる）
-    0, 0, Math.PI * 2
-  );
-  ctx.fillStyle = "rgba(48,50,60,0.85)";
-  ctx.fill();
+  ctx.rect(destX - 5, Math.floor(glassTop), scaledW + 10, Math.ceil(glassH));
+  ctx.clip();
+  ctx.globalCompositeOperation = "multiply";
+  // alpha<1 では multiply が不安定なため完全不透明（alpha=1）で色をグラデーション。
+  // white(255)×Cb = Cb（変化なし） → ラベルゾーン保護。
+  // gray×Cb = 暗化 → アンバーガラスゾーン。
+  const darkGrad = ctx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
+  darkGrad.addColorStop(0,    "rgb(255,255,255)");  // ラベル上端: 変化なし
+  darkGrad.addColorStop(0.10, "rgb(255,255,255)");  // ラベル下端まで(~y750): 変化なし
+  darkGrad.addColorStop(0.35, "rgb(145,145,155)");  // アンバーガラス暗化開始(~y769)
+  darkGrad.addColorStop(0.65, "rgb(100,100,110)");  // 強い暗化
+  darkGrad.addColorStop(1.0,  "rgb(75,75,85)");     // 最暗（瓶底）
+  ctx.fillStyle = darkGrad;
+  ctx.fillRect(destX - 5, Math.floor(glassTop), scaledW + 10, Math.ceil(glassH));
   ctx.restore();
 
   return new Promise((resolve) => {
