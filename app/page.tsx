@@ -56,16 +56,17 @@ async function extractReferenceBackground(file: File): Promise<RefBackground> {
   origCanvas.height = OUTPUT_H;
   const origCtx = origCanvas.getContext("2d")!;
 
-  const scale = Math.min(OUTPUT_W / origBitmap.width, OUTPUT_H / origBitmap.height);
+  // coverスケール（800x1000を完全に埋める、はみ出した部分はクロップ）
+  const scale = Math.max(OUTPUT_W / origBitmap.width, OUTPUT_H / origBitmap.height);
   const sw = origBitmap.width * scale;
   const sh = origBitmap.height * scale;
   const sx = (OUTPUT_W - sw) / 2;
   const sy = (OUTPUT_H - sh) / 2;
 
-  // 背景色をサンプル（実際に画像が描画されている領域の左上隅）
+  // 背景色をサンプル（画像の左上隅付近）
   origCtx.drawImage(origBitmap, sx, sy, sw, sh);
-  const sampleX = Math.round(sx + 4);
-  const sampleY = Math.round(sy + 4);
+  const sampleX = Math.round(Math.max(0, sx) + 4);
+  const sampleY = Math.round(Math.max(0, sy) + 4);
   const edgePx = origCtx.getImageData(sampleX, sampleY, 1, 1).data;
   const bgR = edgePx[0], bgG = edgePx[1], bgB = edgePx[2];
   origCtx.clearRect(0, 0, OUTPUT_W, OUTPUT_H);
@@ -526,7 +527,7 @@ export default function Home() {
                 onClick={() => setImages((p) => p.filter((i) => i.id !== item.id))}
                 className="absolute top-2 right-2 z-10 bg-black/70 hover:bg-red-700 rounded-full w-6 h-6 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
               >✕</button>
-              <div className="aspect-[2/3] relative bg-black">
+              <div className="aspect-[4/5] relative bg-black">
                 <img
                   src={item.previewUrl}
                   alt={item.file.name}
