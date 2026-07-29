@@ -449,7 +449,7 @@ export default function Home() {
   const doneCount = images.filter((i) => i.status === "done").length;
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-10">
+    <main className="max-w-5xl mx-auto px-4 py-10" data-bg-ready={refBg ? "true" : "false"}>
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>

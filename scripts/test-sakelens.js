@@ -17,7 +17,9 @@ const crypto = require('crypto');
 
 const BASE_URL = 'http://localhost:3000';
 const PUBLIC_DIR = path.join(__dirname, '../public');
-const TEST_BOTTLE = path.join(PUBLIC_DIR, 'test-bottle.jpg');
+const TEST_BOTTLE = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : path.join(PUBLIC_DIR, 'test-bottle.jpg');
 
 function md5(filepath) {
   const buf = fs.readFileSync(filepath);
@@ -44,12 +46,12 @@ function getLatestResult() {
     .catch(() => 'unknown');
   console.log(`→ バージョン: ${version}`);
 
-  // 背景抽出完了を待つ（「背景を選択」ボタンが現れるまで）
+  // 背景ロード完了を待つ（data-bg-ready="true"になるまで）
   console.log('→ 背景ロード待機中...');
-  await page.waitForFunction(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    return btns.some(b => b.textContent.includes('背景を選択'));
-  }, { timeout: 180000 });
+  await page.waitForFunction(
+    () => document.querySelector('main')?.dataset.bgReady === 'true',
+    { timeout: 180000 }
+  );
   console.log('→ 背景ロード完了');
 
   // test-bottle.jpgをアップロード
