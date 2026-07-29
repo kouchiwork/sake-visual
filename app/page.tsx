@@ -287,11 +287,12 @@ async function processImage(
         if (pd[i] > 200 && pd[i + 1] > 200 && pd[i + 2] > 200) whiteCount++;
       }
     }
-    if (opaqueCount > 0 && whiteCount / opaqueCount > 0.45) labelBottomY = y;
+    if (opaqueCount > 0 && whiteCount / opaqueCount > 0.35) labelBottomY = y;
   }
+  const labelDetected = labelBottomY > Math.round(destY) + Math.round(scaledH * 0.05);
   const glassTop = labelBottomY + 8;
   const glassH = seamY - glassTop + 20;
-  if (glassH > 0) {
+  if (glassH > 0 && labelDetected) {
     const glassLayer = document.createElement("canvas");
     glassLayer.width = OUTPUT_W;
     glassLayer.height = OUTPUT_H;
@@ -340,10 +341,7 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [refBg, setRefBg] = useState<RefBackground | null>(null);
-  const [isExtractingRef, setIsExtractingRef] = useState(false);
-  const [refPreview, setRefPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const refInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -352,8 +350,7 @@ export default function Home() {
         // キャッシュがあれば即ロード（AI不要）
         const cached = localStorage.getItem(CACHE_KEY);
         if (cached) {
-          const { bgDataUrl, seamY, refBottleH, bgColor, previewUrl } = JSON.parse(cached);
-          setRefPreview(previewUrl);
+          const { bgDataUrl, seamY, refBottleH, bgColor } = JSON.parse(cached);
           const res = await fetch(bgDataUrl);
           const blob = await res.blob();
           setRefBg({ url: URL.createObjectURL(blob), seamY, refBottleH, bgColor });
@@ -362,13 +359,10 @@ export default function Home() {
       } catch {}
 
       // 初回のみAI抽出を実行してキャッシュに保存
-      setIsExtractingRef(true);
       try {
         const res = await fetch("/gion-hanabi.jpg");
         const blob = await res.blob();
         const file = new File([blob], "gion-hanabi.jpg", { type: "image/jpeg" });
-        const previewUrl = URL.createObjectURL(blob);
-        setRefPreview(previewUrl);
         const result = await extractReferenceBackground(file);
         setRefBg(result);
 
@@ -382,38 +376,18 @@ export default function Home() {
         });
         const prevRes = await fetch("/gion-hanabi.jpg");
         const prevBlob = await prevRes.blob();
-        const prevDataUrl = await new Promise<string>(r => {
-          const fr = new FileReader();
-          fr.onload = () => r(fr.result as string);
-          fr.readAsDataURL(prevBlob);
-        });
         try {
           localStorage.setItem("sakelens_default_bg_v1", JSON.stringify({
             bgDataUrl,
             seamY: result.seamY,
             refBottleH: result.refBottleH,
             bgColor: result.bgColor,
-            previewUrl: prevDataUrl,
           }));
         } catch {}
       } catch (e) {
         console.error("default bg load failed:", e);
       }
-      setIsExtractingRef(false);
     })();
-  }, []);
-
-  const handleRefFile = useCallback(async (file: File) => {
-    if (!file.type.startsWith("image/")) return;
-    setRefPreview(URL.createObjectURL(file));
-    setIsExtractingRef(true);
-    try {
-      const result = await extractReferenceBackground(file);
-      setRefBg(result);
-    } catch (e) {
-      console.error("ref extraction failed:", e);
-    }
-    setIsExtractingRef(false);
   }, []);
 
   const addFiles = useCallback((files: File[]) => {
@@ -479,52 +453,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.24.0</p>
-      </div>
-
-      {/* リファレンス背景設定 */}
-      <div className="mb-6 border border-gray-700 rounded-xl p-4">
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-            <p className="text-sm text-gray-300 font-medium mb-1">
-              📷 リファレンス背景（スタジオ写真）
-            </p>
-            <p className="text-xs text-gray-500">
-              {refBg
-                ? "✅ 背景抽出済み — ターゲット瓶はこの背景に合成されます"
-                : "スタジオ背景写真を設定すると、その環境に瓶を合成します"}
-            </p>
-          </div>
-          {refPreview && (
-            <img
-              src={refPreview}
-              alt="reference"
-              className="w-16 h-20 object-contain rounded border border-gray-600"
-            />
-          )}
-          <button
-            onClick={() => refInputRef.current?.click()}
-            disabled={isExtractingRef}
-            className="px-4 py-2 bg-blue-800 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium transition whitespace-nowrap"
-          >
-            {isExtractingRef ? "⏳ 抽出中..." : "背景を選択"}
-          </button>
-          {refBg && (
-            <button
-              onClick={() => { setRefBg(null); setRefPreview(null); }}
-              className="px-3 py-2 text-gray-500 hover:text-gray-300 text-sm transition"
-            >
-              解除
-            </button>
-          )}
-        </div>
-        <input
-          ref={refInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleRefFile(e.target.files[0])}
-        />
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.25.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}
