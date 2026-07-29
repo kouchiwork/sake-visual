@@ -19,8 +19,10 @@ type ImageItem = {
 };
 
 type RefBackground = {
-  url: string;     // 瓶を消したスタジオ背景のblob URL
-  seamY: number;   // 参照瓶の床面Y座標（影・配置の基準）
+  url: string;
+  seamY: number;
+  refBottleH: number;
+  bgColor: [number, number, number];
 };
 
 // ── バウンディングボックス取得 ──────────────────────
@@ -86,32 +88,55 @@ async function extractReferenceBackground(file: File): Promise<RefBackground> {
     i.src = URL.createObjectURL(bottleBlob);
   });
 
-  // 瓶のseamYを検出（参照瓶の床面位置）
+  // 瓶のseamYと高さを検出
   const tmpC = document.createElement("canvas");
   tmpC.width = OUTPUT_W; tmpC.height = OUTPUT_H;
   const tmpCtx = tmpC.getContext("2d")!;
   tmpCtx.drawImage(bottleImg, 0, 0, OUTPUT_W, OUTPUT_H);
-  const bb = getBoundingBox(tmpCtx.getImageData(0, 0, OUTPUT_W, OUTPUT_H));
+  const maskData = tmpCtx.getImageData(0, 0, OUTPUT_W, OUTPUT_H);
+  const bb = getBoundingBox(maskData);
   const refSeamY = bb.maxY;
+  const refBottleH = bb.maxY - bb.minY;
 
-  // origCanvasから瓶を destination-out で消す
-  origCtx.globalCompositeOperation = "destination-out";
-  origCtx.drawImage(bottleImg, 0, 0, OUTPUT_W, OUTPUT_H);
-  origCtx.globalCompositeOperation = "source-over";
+  // 瓶マスクのある画素を横方向インターポレーションでinpaint
+  const origData = origCtx.getImageData(0, 0, OUTPUT_W, OUTPUT_H);
+  const result = new Uint8ClampedArray(origData.data);
+  for (let y = 0; y < OUTPUT_H; y++) {
+    let bottleStart = -1, bottleEnd = -1;
+    for (let x = 0; x < OUTPUT_W; x++) {
+      if (maskData.data[(y * OUTPUT_W + x) * 4 + 3] > 5) {
+        if (bottleStart < 0) bottleStart = x;
+        bottleEnd = x;
+      }
+    }
+    if (bottleStart < 0) continue;
+    const leftX = Math.max(0, bottleStart - 1);
+    const rightX = Math.min(OUTPUT_W - 1, bottleEnd + 1);
+    const li = (y * OUTPUT_W + leftX) * 4;
+    const ri = (y * OUTPUT_W + rightX) * 4;
+    const lR = origData.data[li], lG = origData.data[li + 1], lB = origData.data[li + 2];
+    const rR = origData.data[ri], rG = origData.data[ri + 1], rB = origData.data[ri + 2];
+    const span = bottleEnd - bottleStart + 1;
+    for (let x = bottleStart; x <= bottleEnd; x++) {
+      const t = span > 1 ? (x - bottleStart) / (span - 1) : 0.5;
+      const idx = (y * OUTPUT_W + x) * 4;
+      result[idx]     = Math.round(lR + (rR - lR) * t);
+      result[idx + 1] = Math.round(lG + (rG - lG) * t);
+      result[idx + 2] = Math.round(lB + (rB - lB) * t);
+      result[idx + 3] = 255;
+    }
+  }
 
-  // 穴を背景色で埋める（bgCanvasの上にorigCanvasを重ねる）
   const bgCanvas = document.createElement("canvas");
   bgCanvas.width = OUTPUT_W; bgCanvas.height = OUTPUT_H;
   const bgCtx = bgCanvas.getContext("2d")!;
-  bgCtx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
-  bgCtx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
-  bgCtx.drawImage(origCanvas, 0, 0);
+  bgCtx.putImageData(new ImageData(result, OUTPUT_W, OUTPUT_H), 0, 0);
 
   const url = await new Promise<string>(r =>
     bgCanvas.toBlob(b => r(URL.createObjectURL(b!)), "image/png")
   );
 
-  return { url, seamY: refSeamY };
+  return { url, seamY: refSeamY, refBottleH, bgColor: [bgR, bgG, bgB] };
 }
 
 // ── Step2: ターゲット瓶を処理してリファレンス背景に合成 ──
@@ -149,15 +174,15 @@ async function processImage(
   let destX: number, destY: number, scaledW: number, scaledH: number, seamY: number;
 
   if (refBg) {
-    // リファレンス床面に瓶底を合わせる
+    // 参照瓶と同じ高さにスケール（step-by-step.htmlと同じ方式）
     const targetSeamY = refBg.seamY;
-    const maxH = targetSeamY - OUTPUT_H * 0.05; // 上余白5%
+    const maxH = Math.min(refBg.refBottleH, OUTPUT_H * BOTTLE_MAX_H_RATIO);
     const maxW = OUTPUT_W * BOTTLE_MAX_W_RATIO;
-    const scale = Math.min(maxW / bw, maxH / bh, OUTPUT_H * BOTTLE_MAX_H_RATIO / bh);
+    const scale = Math.min(maxW / bw, maxH / bh);
     scaledW = bw * scale;
     scaledH = bh * scale;
     destX = (OUTPUT_W - scaledW) / 2;
-    destY = targetSeamY - scaledH; // 瓶底をseamYに合わせる
+    destY = targetSeamY - scaledH;
     seamY = targetSeamY;
   } else {
     const maxW = OUTPUT_W * BOTTLE_MAX_W_RATIO;
@@ -193,33 +218,49 @@ async function processImage(
     drawFallbackBackground(ctx, seamY);
   }
 
-  // 接地影（瓶底直下）
-  ctx.save();
-  ctx.filter = "blur(8px)";
-  ctx.beginPath();
-  ctx.ellipse(centerX, seamY + 1, scaledW * 0.46, 8, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(0,0,0,0.75)";
-  ctx.fill();
-  ctx.restore();
-
-  // 投射影（右方向）
-  const shX1 = destX + scaledW * 0.3;
-  const shX2 = OUTPUT_W * 0.95;
-  const shCX = (shX1 + shX2) / 2;
-  const shRx = (shX2 - shX1) / 2;
-  ctx.save();
-  ctx.filter = "blur(14px)";
-  ctx.beginPath();
-  ctx.ellipse(shCX, seamY + 2, shRx, 18, 0, 0, Math.PI * 2);
-  const castGrad = ctx.createLinearGradient(shX1, 0, shX2, 0);
-  castGrad.addColorStop(0,    "rgba(0,0,0,0.95)");
-  castGrad.addColorStop(0.20, "rgba(0,0,0,0.75)");
-  castGrad.addColorStop(0.45, "rgba(0,0,0,0.50)");
-  castGrad.addColorStop(0.70, "rgba(0,0,0,0.25)");
-  castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
-  ctx.fillStyle = castGrad;
-  ctx.fill();
-  ctx.restore();
+  // 接地影
+  const shadowRX = scaledW * 0.28;
+  const shadowRY = scaledH * 0.022;
+  if (refBg) {
+    // 参照背景色ベースの影（step-by-step.html Step2方式）
+    const [bgR, bgG, bgB] = refBg.bgColor;
+    const shadowGrad = ctx.createRadialGradient(centerX, seamY, 0, centerX, seamY, shadowRX);
+    shadowGrad.addColorStop(0, `rgba(${bgR * 0.3 | 0},${bgG * 0.3 | 0},${bgB * 0.3 | 0},0.55)`);
+    shadowGrad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.save();
+    ctx.scale(1, shadowRY / shadowRX);
+    ctx.fillStyle = shadowGrad;
+    ctx.beginPath();
+    ctx.arc(centerX, seamY * (shadowRX / shadowRY), shadowRX, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.filter = "blur(8px)";
+    ctx.beginPath();
+    ctx.ellipse(centerX, seamY + 1, scaledW * 0.46, 8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
+    ctx.fill();
+    ctx.restore();
+    // 投射影（右方向）
+    const shX1 = destX + scaledW * 0.3;
+    const shX2 = OUTPUT_W * 0.95;
+    const shCX = (shX1 + shX2) / 2;
+    const shRx = (shX2 - shX1) / 2;
+    ctx.save();
+    ctx.filter = "blur(14px)";
+    ctx.beginPath();
+    ctx.ellipse(shCX, seamY + 2, shRx, 18, 0, 0, Math.PI * 2);
+    const castGrad = ctx.createLinearGradient(shX1, 0, shX2, 0);
+    castGrad.addColorStop(0,    "rgba(0,0,0,0.95)");
+    castGrad.addColorStop(0.20, "rgba(0,0,0,0.75)");
+    castGrad.addColorStop(0.45, "rgba(0,0,0,0.50)");
+    castGrad.addColorStop(0.70, "rgba(0,0,0,0.25)");
+    castGrad.addColorStop(1.0,  "rgba(0,0,0,0)");
+    ctx.fillStyle = castGrad;
+    ctx.fill();
+    ctx.restore();
+  }
 
   // 瓶をオフスクリーンに描く
   const offscreen = document.createElement("canvas");
