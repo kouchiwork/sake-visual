@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 // ── 出力設定 ──────────────────────────────────────────
 const OUTPUT_W = 800;
@@ -345,6 +345,23 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    (async () => {
+      setIsExtractingRef(true);
+      try {
+        const res = await fetch("/gion-hanabi.jpg");
+        const blob = await res.blob();
+        const file = new File([blob], "gion-hanabi.jpg", { type: "image/jpeg" });
+        setRefPreview(URL.createObjectURL(blob));
+        const result = await extractReferenceBackground(file);
+        setRefBg(result);
+      } catch (e) {
+        console.error("default bg load failed:", e);
+      }
+      setIsExtractingRef(false);
+    })();
+  }, []);
+
   const handleRefFile = useCallback(async (file: File) => {
     if (!file.type.startsWith("image/")) return;
     setRefPreview(URL.createObjectURL(file));
@@ -421,7 +438,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.22.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.23.0</p>
       </div>
 
       {/* リファレンス背景設定 */}
