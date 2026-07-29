@@ -347,14 +347,55 @@ export default function Home() {
 
   useEffect(() => {
     (async () => {
+      const CACHE_KEY = "sakelens_default_bg_v1";
+      try {
+        // キャッシュがあれば即ロード（AI不要）
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+          const { bgDataUrl, seamY, refBottleH, bgColor, previewUrl } = JSON.parse(cached);
+          setRefPreview(previewUrl);
+          const res = await fetch(bgDataUrl);
+          const blob = await res.blob();
+          setRefBg({ url: URL.createObjectURL(blob), seamY, refBottleH, bgColor });
+          return;
+        }
+      } catch {}
+
+      // 初回のみAI抽出を実行してキャッシュに保存
       setIsExtractingRef(true);
       try {
         const res = await fetch("/gion-hanabi.jpg");
         const blob = await res.blob();
         const file = new File([blob], "gion-hanabi.jpg", { type: "image/jpeg" });
-        setRefPreview(URL.createObjectURL(blob));
+        const previewUrl = URL.createObjectURL(blob);
+        setRefPreview(previewUrl);
         const result = await extractReferenceBackground(file);
         setRefBg(result);
+
+        // 結果をlocalStorageにキャッシュ
+        const bgRes = await fetch(result.url);
+        const bgBlob = await bgRes.blob();
+        const bgDataUrl = await new Promise<string>(r => {
+          const fr = new FileReader();
+          fr.onload = () => r(fr.result as string);
+          fr.readAsDataURL(bgBlob);
+        });
+        const prevRes = await fetch("/gion-hanabi.jpg");
+        const prevBlob = await prevRes.blob();
+        const prevDataUrl = await new Promise<string>(r => {
+          const fr = new FileReader();
+          fr.onload = () => r(fr.result as string);
+          fr.readAsDataURL(prevBlob);
+        });
+        try {
+          localStorage.setItem("sakelens_default_bg_v1", JSON.stringify({
+            bgDataUrl,
+            seamY: result.seamY,
+            refBottleH: result.refBottleH,
+            bgColor: result.bgColor,
+            previewUrl: prevDataUrl,
+          }));
+        } catch {}
       } catch (e) {
         console.error("default bg load failed:", e);
       }
@@ -438,7 +479,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.23.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.24.0</p>
       </div>
 
       {/* リファレンス背景設定 */}
