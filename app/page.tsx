@@ -18,12 +18,8 @@ type ImageItem = {
   errorMessage?: string;
 };
 
-type RefBackground = {
-  url: string;     // 瓶を消したスタジオ背景のblob URL
-  seamY: number;   // 参照瓶の床面Y座標（影・配置の基準）
-};
-
-// ── バウンディングボックス取得 ──────────────────────
+// ── 透明ピクセルを除いたバウンディングボックスを取得 ──
+// visualMaxY: alpha > 128 の最下行（接地影の基準点として使用）
 function getBoundingBox(imageData: ImageData) {
   const { data, width, height } = imageData;
   let minX = width, minY = height, maxX = 0, maxY = 0;
@@ -43,157 +39,127 @@ function getBoundingBox(imageData: ImageData) {
   return { minX, minY, maxX, maxY, visualMaxY };
 }
 
-// ── Step1: リファレンス画像から瓶を消してスタジオ背景を抽出 ──
-async function extractReferenceBackground(file: File): Promise<RefBackground> {
-  const { removeBackground } = await import("@imgly/background-removal");
+// ── スタジオ背景
+// seamY: 瓶底Y座標。壁→床の遷移をその少し上（約50px）に配置。
+function drawStudioBackground(ctx: CanvasRenderingContext2D, seamY: number) {
+  const w = OUTPUT_W, h = OUTPUT_H;
+  const floorY = seamY - 55; // 瓶底より少し上を境界とする
 
-  // 元画像をOUTPUTサイズにスケール
-  const origBitmap = await createImageBitmap(file);
-  const origCanvas = document.createElement("canvas");
-  origCanvas.width = OUTPUT_W;
-  origCanvas.height = OUTPUT_H;
-  const origCtx = origCanvas.getContext("2d")!;
+  // 1. ベース壁面（全体を少し明るく）
+  ctx.fillStyle = "#a8aaac";
+  ctx.fillRect(0, 0, w, h);
 
-  const scale = Math.min(OUTPUT_W / origBitmap.width, OUTPUT_H / origBitmap.height);
-  const sw = origBitmap.width * scale;
-  const sh = origBitmap.height * scale;
-  const sx = (OUTPUT_W - sw) / 2;
-  const sy = (OUTPUT_H - sh) / 2;
-
-  // 背景色をサンプル（実際に画像が描画されている領域の左上隅）
-  origCtx.drawImage(origBitmap, sx, sy, sw, sh);
-  const sampleX = Math.round(sx + 4);
-  const sampleY = Math.round(sy + 4);
-  const edgePx = origCtx.getImageData(sampleX, sampleY, 1, 1).data;
-  const bgR = edgePx[0], bgG = edgePx[1], bgB = edgePx[2];
-  origCtx.clearRect(0, 0, OUTPUT_W, OUTPUT_H);
-  origCtx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
-  origCtx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
-  origCtx.drawImage(origBitmap, sx, sy, sw, sh);
-
-  // スケール済み画像をFileに変換して背景除去
-  const scaledBlob = await new Promise<Blob>(r =>
-    origCanvas.toBlob(b => r(b!), "image/jpeg", 0.95)
+  // 2. ソフトボックス（左上から瓶の背後を明るく照らす）
+  const softbox = ctx.createRadialGradient(
+    w * 0.38, h * 0.10, 0,
+    w * 0.38, h * 0.10, w * 1.0
   );
-  const scaledFile = new File([scaledBlob], "ref.jpg", { type: "image/jpeg" });
-  const bottleBlob = await removeBackground(scaledFile);
+  softbox.addColorStop(0,    "rgba(255,255,255,0.62)");
+  softbox.addColorStop(0.18, "rgba(255,255,255,0.34)");
+  softbox.addColorStop(0.45, "rgba(255,255,255,0.10)");
+  softbox.addColorStop(0.70, "rgba(255,255,255,0.02)");
+  softbox.addColorStop(1,    "rgba(255,255,255,0)");
+  ctx.fillStyle = softbox;
+  ctx.fillRect(0, 0, w, h);
 
-  // 瓶マスク画像を作成
-  const bottleImg = await new Promise<HTMLImageElement>((res, rej) => {
-    const i = new Image();
-    i.onload = () => res(i);
-    i.onerror = rej;
-    i.src = URL.createObjectURL(bottleBlob);
-  });
+  // 3. 壁/床の境界をより明確に（境界付近に暗めのアクセント）
+  const boundary = ctx.createLinearGradient(0, floorY - 25, 0, floorY + 55);
+  boundary.addColorStop(0,    "rgba(0,0,0,0)");
+  boundary.addColorStop(0.48, "rgba(0,0,0,0.09)");
+  boundary.addColorStop(0.72, "rgba(0,0,0,0.04)");
+  boundary.addColorStop(1,    "rgba(0,0,0,0)");
+  ctx.fillStyle = boundary;
+  ctx.fillRect(0, floorY - 25, w, 80);
 
-  // 瓶のseamYを検出（参照瓶の床面位置）
-  const tmpC = document.createElement("canvas");
-  tmpC.width = OUTPUT_W; tmpC.height = OUTPUT_H;
-  const tmpCtx = tmpC.getContext("2d")!;
-  tmpCtx.drawImage(bottleImg, 0, 0, OUTPUT_W, OUTPUT_H);
-  const bb = getBoundingBox(tmpCtx.getImageData(0, 0, OUTPUT_W, OUTPUT_H));
-  const refSeamY = bb.maxY;
+  // 4. 床面暗化（より急な勾配で壁との差を強調）
+  const floor = ctx.createLinearGradient(0, floorY, 0, h);
+  floor.addColorStop(0,    "rgba(0,0,0,0.05)");
+  floor.addColorStop(0.18, "rgba(0,0,0,0.15)");
+  floor.addColorStop(0.48, "rgba(0,0,0,0.24)");
+  floor.addColorStop(1,    "rgba(0,0,0,0.32)");
+  ctx.fillStyle = floor;
+  ctx.fillRect(0, floorY, w, h - floorY);
 
-  // origCanvasから瓶を destination-out で消す
-  origCtx.globalCompositeOperation = "destination-out";
-  origCtx.drawImage(bottleImg, 0, 0, OUTPUT_W, OUTPUT_H);
-  origCtx.globalCompositeOperation = "source-over";
+  // 5. 奥行き感（手前の床が暗くなる遠近法）
+  const depth = ctx.createLinearGradient(0, h * 0.78, 0, h);
+  depth.addColorStop(0, "rgba(0,0,0,0)");
+  depth.addColorStop(1, "rgba(0,0,0,0.18)");
+  ctx.fillStyle = depth;
+  ctx.fillRect(0, h * 0.78, w, h - h * 0.78);
 
-  // 穴を背景色で埋める（bgCanvasの上にorigCanvasを重ねる）
-  const bgCanvas = document.createElement("canvas");
-  bgCanvas.width = OUTPUT_W; bgCanvas.height = OUTPUT_H;
-  const bgCtx = bgCanvas.getContext("2d")!;
-  bgCtx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
-  bgCtx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
-  bgCtx.drawImage(origCanvas, 0, 0);
+  // 6. 左右端シェーディング
+  const sideL = ctx.createLinearGradient(0, 0, w * 0.22, 0);
+  sideL.addColorStop(0, "rgba(0,0,0,0.10)");
+  sideL.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = sideL;
+  ctx.fillRect(0, 0, w, h);
 
-  const url = await new Promise<string>(r =>
-    bgCanvas.toBlob(b => r(URL.createObjectURL(b!)), "image/png")
-  );
-
-  return { url, seamY: refSeamY };
+  const sideR = ctx.createLinearGradient(w, 0, w * 0.78, 0);
+  sideR.addColorStop(0, "rgba(0,0,0,0.08)");
+  sideR.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = sideR;
+  ctx.fillRect(0, 0, w, h);
 }
 
-// ── Step2: ターゲット瓶を処理してリファレンス背景に合成 ──
-async function processImage(
-  item: ImageItem,
-  refBg: RefBackground | null
-): Promise<string> {
+// ── 画像1枚を処理 ────────────────────────────────────
+async function processImage(item: ImageItem): Promise<string> {
   const { removeBackground } = await import("@imgly/background-removal");
 
+  // 背景除去（publicPath はライブラリのデフォルト = staticimgly.com を使用）
   const blob = await removeBackground(item.file);
 
+  // 透明PNG → HTMLImageElement
+  const transparentUrl = URL.createObjectURL(blob);
   const img = await new Promise<HTMLImageElement>((res, rej) => {
     const i = new Image();
     i.onload = () => res(i);
     i.onerror = rej;
-    i.src = URL.createObjectURL(blob);
+    i.src = transparentUrl;
   });
 
   // バウンディングボックス検出
   const tmpCanvas = document.createElement("canvas");
-  tmpCanvas.width = img.naturalWidth;
+  tmpCanvas.width  = img.naturalWidth;
   tmpCanvas.height = img.naturalHeight;
   const tmpCtx = tmpCanvas.getContext("2d")!;
   tmpCtx.drawImage(img, 0, 0);
-  const { minX, minY, maxX, maxY } = getBoundingBox(
+  const { minX, minY, maxX, maxY, visualMaxY } = getBoundingBox(
     tmpCtx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height)
   );
+
+  URL.revokeObjectURL(transparentUrl);
 
   const bw = maxX - minX;
   const bh = maxY - minY;
 
-  // 瓶のスケール・配置を計算
-  // リファレンスがある場合: 参照瓶のseamYに合わせて瓶底を配置
-  // リファレンスがない場合: 従来通り中央配置
-  let destX: number, destY: number, scaledW: number, scaledH: number, seamY: number;
+  // 統一スケール計算（瓶が常に同じ大きさに）
+  const maxW = OUTPUT_W * BOTTLE_MAX_W_RATIO;
+  const maxH = OUTPUT_H * BOTTLE_MAX_H_RATIO;
+  const scale  = Math.min(maxW / bw, maxH / bh);
+  const scaledW = bw * scale;
+  const scaledH = bh * scale;
 
-  if (refBg) {
-    // リファレンス床面に瓶底を合わせる
-    const targetSeamY = refBg.seamY;
-    const maxH = targetSeamY - OUTPUT_H * 0.05; // 上余白5%
-    const maxW = OUTPUT_W * BOTTLE_MAX_W_RATIO;
-    const scale = Math.min(maxW / bw, maxH / bh, OUTPUT_H * BOTTLE_MAX_H_RATIO / bh);
-    scaledW = bw * scale;
-    scaledH = bh * scale;
-    destX = (OUTPUT_W - scaledW) / 2;
-    destY = targetSeamY - scaledH; // 瓶底をseamYに合わせる
-    seamY = targetSeamY;
-  } else {
-    const maxW = OUTPUT_W * BOTTLE_MAX_W_RATIO;
-    const maxH = OUTPUT_H * BOTTLE_MAX_H_RATIO;
-    const scale = Math.min(maxW / bw, maxH / bh);
-    scaledW = bw * scale;
-    scaledH = bh * scale;
-    destX = (OUTPUT_W - scaledW) / 2;
-    destY = (OUTPUT_H - scaledH) / 2;
-    seamY = destY + scaledH;
-  }
-
+  // 水平中央・垂直中央
+  const destX   = (OUTPUT_W - scaledW) / 2;
+  const destY   = (OUTPUT_H - scaledH) / 2;
+  // seamY: maxY（alpha>15）の最下行基準。ガラス底の半透明ピクセルも含む。
+  const seamY      = destY + (maxY - minY) * scale;
+  // visualSeamY: alpha>128 の視覚的な不透明底（影の接地点はここ）
+  const visualSeamY = destY + (visualMaxY - minY) * scale;
   const centerX = OUTPUT_W / 2;
+  const bottleRight = destX + scaledW; // = centerX + scaledW/2
 
   // 最終キャンバス
   const canvas = document.createElement("canvas");
-  canvas.width = OUTPUT_W;
+  canvas.width  = OUTPUT_W;
   canvas.height = OUTPUT_H;
   const ctx = canvas.getContext("2d")!;
 
-  // 背景を描く
-  if (refBg) {
-    // リファレンス背景を使用
-    const bgImg = await new Promise<HTMLImageElement>((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i);
-      i.onerror = rej;
-      i.src = refBg.url;
-    });
-    ctx.drawImage(bgImg, 0, 0, OUTPUT_W, OUTPUT_H);
-  } else {
-    // フォールバック: canvas描画背景
-    drawFallbackBackground(ctx, seamY);
-  }
+  // 背景（壁・床・境目：seamY基準）
+  drawStudioBackground(ctx, seamY);
 
-  // 接地影（瓶底直下）
+  // ── 床影（瓶を描く前に描画）─────────────────────────────
+  // コンタクト影: 瓶底直下（強め）
   ctx.save();
   ctx.filter = "blur(8px)";
   ctx.beginPath();
@@ -202,7 +168,7 @@ async function processImage(
   ctx.fill();
   ctx.restore();
 
-  // 投射影（右方向）
+  // 投射影: 右方向へ長く伸びる
   const shX1 = destX + scaledW * 0.3;
   const shX2 = OUTPUT_W * 0.95;
   const shCX = (shX1 + shX2) / 2;
@@ -221,21 +187,24 @@ async function processImage(
   ctx.fill();
   ctx.restore();
 
-  // 瓶をオフスクリーンに描く
+  // 瓶本体をオフスクリーンに描く（背景除去済み画像をそのまま配置）
   const offscreen = document.createElement("canvas");
-  offscreen.width = OUTPUT_W;
+  offscreen.width  = OUTPUT_W;
   offscreen.height = OUTPUT_H;
   const offCtx = offscreen.getContext("2d")!;
   offCtx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
+
+  // オフスクリーンをメインcanvasに合成（瓶を背景の上に描く）
   ctx.drawImage(offscreen, 0, 0);
 
-  // ガラス暗化（ラベル下端をピクセル色で検出）
+  // ── ガラス暗化（ラベルより下の瓶底部分）──────────────────
+  // ラベル下端をピクセル色で検出：白いピクセル(R,G,B>200)の最下行を探す
   const offPixels = offCtx.getImageData(0, 0, OUTPUT_W, OUTPUT_H);
   const pd = offPixels.data;
   const scanCX = Math.round(destX + scaledW * 0.5);
   const scanHalf = Math.round(scaledW * 0.25);
-  let labelBottomY = Math.round(destY);
-  for (let y = Math.round(destY); y < Math.round(seamY); y++) {
+  let labelBottomY = destY;
+  for (let y = destY; y < seamY; y++) {
     let whiteCount = 0, opaqueCount = 0;
     for (let x = scanCX - scanHalf; x <= scanCX + scanHalf; x++) {
       const i = (y * OUTPUT_W + x) * 4;
@@ -247,13 +216,15 @@ async function processImage(
     }
     if (opaqueCount > 0 && whiteCount / opaqueCount > 0.45) labelBottomY = y;
   }
-  const glassTop = labelBottomY + 8;
-  const glassH = seamY - glassTop + 20;
+  const glassTop = labelBottomY + 8;  // ラベル下端より8px下から
+  const glassH   = seamY - glassTop + 20;
   if (glassH > 0) {
     const glassLayer = document.createElement("canvas");
-    glassLayer.width = OUTPUT_W;
+    glassLayer.width  = OUTPUT_W;
     glassLayer.height = OUTPUT_H;
     const glCtx = glassLayer.getContext("2d")!;
+
+    // 暗化グラデーション（素材色を自然に少し暗くする程度）
     const darkGrad = glCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
     darkGrad.addColorStop(0,    "rgba(30,15,5,0)");
     darkGrad.addColorStop(0.25, "rgba(30,15,5,0.30)");
@@ -261,8 +232,12 @@ async function processImage(
     darkGrad.addColorStop(1.0,  "rgba(30,15,5,0.55)");
     glCtx.fillStyle = darkGrad;
     glCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
+
+    // 瓶シルエットで切り抜き（背景汚染防止）
     glCtx.globalCompositeOperation = "destination-in";
     glCtx.drawImage(offscreen, 0, 0);
+
+    // 暗化レイヤーをメインcanvasに合成（1パス）
     ctx.drawImage(glassLayer, 0, 0);
   }
 
@@ -271,50 +246,12 @@ async function processImage(
   });
 }
 
-// ── フォールバック背景（リファレンスなし時） ──────────
-function drawFallbackBackground(ctx: CanvasRenderingContext2D, seamY: number) {
-  const w = OUTPUT_W, h = OUTPUT_H;
-  const floorY = seamY - 55;
-  ctx.fillStyle = "#a8aaac";
-  ctx.fillRect(0, 0, w, h);
-  const softbox = ctx.createRadialGradient(w * 0.38, h * 0.10, 0, w * 0.38, h * 0.10, w * 1.0);
-  softbox.addColorStop(0,    "rgba(255,255,255,0.62)");
-  softbox.addColorStop(0.18, "rgba(255,255,255,0.34)");
-  softbox.addColorStop(0.45, "rgba(255,255,255,0.10)");
-  softbox.addColorStop(1,    "rgba(255,255,255,0)");
-  ctx.fillStyle = softbox;
-  ctx.fillRect(0, 0, w, h);
-  const floor = ctx.createLinearGradient(0, floorY, 0, h);
-  floor.addColorStop(0,    "rgba(0,0,0,0.05)");
-  floor.addColorStop(0.48, "rgba(0,0,0,0.24)");
-  floor.addColorStop(1,    "rgba(0,0,0,0.32)");
-  ctx.fillStyle = floor;
-  ctx.fillRect(0, floorY, w, h - floorY);
-}
-
 // ── コンポーネント ────────────────────────────────────
 export default function Home() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [refBg, setRefBg] = useState<RefBackground | null>(null);
-  const [isExtractingRef, setIsExtractingRef] = useState(false);
-  const [refPreview, setRefPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const refInputRef = useRef<HTMLInputElement>(null);
-
-  const handleRefFile = useCallback(async (file: File) => {
-    if (!file.type.startsWith("image/")) return;
-    setRefPreview(URL.createObjectURL(file));
-    setIsExtractingRef(true);
-    try {
-      const result = await extractReferenceBackground(file);
-      setRefBg(result);
-    } catch (e) {
-      console.error("ref extraction failed:", e);
-    }
-    setIsExtractingRef(false);
-  }, []);
 
   const addFiles = useCallback((files: File[]) => {
     const newItems: ImageItem[] = files
@@ -342,7 +279,7 @@ export default function Home() {
         prev.map((i) => (i.id === item.id ? { ...i, status: "processing" } : i))
       );
       try {
-        const resultUrl = await processImage(item, refBg);
+        const resultUrl = await processImage(item);
         setImages((prev) =>
           prev.map((i) =>
             i.id === item.id ? { ...i, status: "done", resultUrl } : i
@@ -350,6 +287,7 @@ export default function Home() {
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        console.error("processImage error:", msg);
         setImages((prev) =>
           prev.map((i) =>
             i.id === item.id ? { ...i, status: "error", errorMessage: msg } : i
@@ -371,63 +309,23 @@ export default function Home() {
     });
   };
 
-  const waitingCount = images.filter((i) => i.status === "waiting").length;
-  const doneCount = images.filter((i) => i.status === "done").length;
+  const waitingCount    = images.filter((i) => i.status === "waiting").length;
+  const doneCount       = images.filter((i) => i.status === "done").length;
 
   return (
     <main className="max-w-5xl mx-auto px-4 py-10">
+      {/* ヘッダー */}
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
-        <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.21.0</p>
+        <p className="text-gray-400 text-sm">
+          日本酒ボトルをスタジオ撮影風に自動変換
+        </p>
+        <p className="text-xs text-gray-600 mt-1">
+          出力: {OUTPUT_W}×{OUTPUT_H}px 固定 / 瓶サイズ・位置を自動統一　v1.21.0
+        </p>
       </div>
 
-      {/* リファレンス背景設定 */}
-      <div className="mb-6 border border-gray-700 rounded-xl p-4">
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-            <p className="text-sm text-gray-300 font-medium mb-1">
-              📷 リファレンス背景（スタジオ写真）
-            </p>
-            <p className="text-xs text-gray-500">
-              {refBg
-                ? "✅ 背景抽出済み — ターゲット瓶はこの背景に合成されます"
-                : "スタジオ背景写真を設定すると、その環境に瓶を合成します"}
-            </p>
-          </div>
-          {refPreview && (
-            <img
-              src={refPreview}
-              alt="reference"
-              className="w-16 h-20 object-contain rounded border border-gray-600"
-            />
-          )}
-          <button
-            onClick={() => refInputRef.current?.click()}
-            disabled={isExtractingRef}
-            className="px-4 py-2 bg-blue-800 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium transition whitespace-nowrap"
-          >
-            {isExtractingRef ? "⏳ 抽出中..." : "背景を選択"}
-          </button>
-          {refBg && (
-            <button
-              onClick={() => { setRefBg(null); setRefPreview(null); }}
-              className="px-3 py-2 text-gray-500 hover:text-gray-300 text-sm transition"
-            >
-              解除
-            </button>
-          )}
-        </div>
-        <input
-          ref={refInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleRefFile(e.target.files[0])}
-        />
-      </div>
-
-      {/* ターゲット画像ドロップゾーン */}
+      {/* ドロップゾーン */}
       <div
         className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-colors mb-6
           ${isDragging ? "border-amber-500 bg-amber-950/20" : "border-gray-700 hover:border-gray-500"}`}
@@ -449,6 +347,7 @@ export default function Home() {
         />
       </div>
 
+      {/* アクションボタン */}
       {images.length > 0 && (
         <div className="flex gap-3 mb-6 flex-wrap items-center">
           {waitingCount > 0 && (
@@ -477,14 +376,18 @@ export default function Home() {
         </div>
       )}
 
+      {/* 画像グリッド */}
       {images.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {images.map((item) => (
             <div key={item.id} className="rounded-xl overflow-hidden bg-gray-900 border border-gray-800 relative group">
+              {/* 削除ボタン */}
               <button
                 onClick={() => setImages((p) => p.filter((i) => i.id !== item.id))}
                 className="absolute top-2 right-2 z-10 bg-black/70 hover:bg-red-700 rounded-full w-6 h-6 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
               >✕</button>
+
+              {/* プレビュー */}
               <div className="aspect-[2/3] relative bg-black">
                 <img
                   src={item.previewUrl}
@@ -493,7 +396,11 @@ export default function Home() {
                     ${item.status === "done" ? "opacity-0" : "opacity-100"}`}
                 />
                 {item.resultUrl && (
-                  <img src={item.resultUrl} alt="変換後" className="absolute inset-0 w-full h-full object-contain" />
+                  <img
+                    src={item.resultUrl}
+                    alt="変換後"
+                    className="absolute inset-0 w-full h-full object-contain"
+                  />
                 )}
                 {item.status === "processing" && (
                   <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-2">
@@ -509,6 +416,8 @@ export default function Home() {
                   </div>
                 )}
               </div>
+
+              {/* 下部情報 */}
               <div className="px-2 py-2 flex items-center justify-between">
                 <span className={`text-xs px-2 py-0.5 rounded-full
                   ${item.status === "waiting"    ? "bg-gray-700 text-gray-300" : ""}
