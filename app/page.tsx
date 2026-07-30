@@ -140,6 +140,103 @@ async function extractReferenceBackground(file: File): Promise<RefBackground> {
   return { url, seamY: refSeamY, refBottleH, bgColor: [bgR, bgG, bgB] };
 }
 
+// ── 白背景をAI用に置換（Sobelエッジ検出で瓶輪郭をバリアにする）──
+async function preprocessForAI(file: File): Promise<File> {
+  const bitmap = await createImageBitmap(file);
+  const w = bitmap.width, h = bitmap.height;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(bitmap, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+
+  // コーナー4点で背景色を推定
+  const ci = [0, (w-1)*4, (h-1)*w*4, ((h-1)*w+w-1)*4];
+  const bgR = ci.reduce((s,i) => s + d[i],   0) / 4;
+  const bgG = ci.reduce((s,i) => s + d[i+1], 0) / 4;
+  const bgB = ci.reduce((s,i) => s + d[i+2], 0) / 4;
+  if ((bgR + bgG + bgB) / 3 < 200) return file;
+
+  // Sobel勾配を計算（瓶の輪郭 = 高勾配 = フラッドフィルのバリア）
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    gray[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
+  }
+  const grad = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const gx = (
+        -gray[(y-1)*w+(x-1)] + gray[(y-1)*w+(x+1)] +
+        -2*gray[y*w+(x-1)]   + 2*gray[y*w+(x+1)] +
+        -gray[(y+1)*w+(x-1)] + gray[(y+1)*w+(x+1)]
+      );
+      const gy = (
+        -gray[(y-1)*w+(x-1)] - 2*gray[(y-1)*w+x] - gray[(y-1)*w+(x+1)] +
+         gray[(y+1)*w+(x-1)] + 2*gray[(y+1)*w+x] + gray[(y+1)*w+(x+1)]
+      );
+      grad[y * w + x] = Math.sqrt(gx*gx + gy*gy);
+    }
+  }
+
+  // 動的置換色選択（瓶の色と被らない色を選ぶ）
+  const CANDIDATES: [number, number, number][] = [
+    [255, 0, 255], [0, 255, 255], [255, 128, 0],
+    [0, 180, 80],  [0, 0, 255],  [255, 0, 0],
+  ];
+  const STEP = 4;
+  let bestColor = CANDIDATES[0], bestMinDist = -1;
+  for (const [cr, cg, cb] of CANDIDATES) {
+    let minDist = Infinity;
+    for (let y = (h*0.25)|0; y < (h*0.75)|0; y += STEP) {
+      for (let x = (w*0.25)|0; x < (w*0.75)|0; x += STEP) {
+        const i = (y * w + x) * 4;
+        const dr = d[i]-cr, dg = d[i+1]-cg, db = d[i+2]-cb;
+        const dist = dr*dr + dg*dg + db*db;
+        if (dist < minDist) minDist = dist;
+      }
+    }
+    if (minDist > bestMinDist) { bestMinDist = minDist; bestColor = [cr, cg, cb]; }
+  }
+  const [REPL_R, REPL_G, REPL_B] = bestColor;
+
+  // エッジ考慮フラッドフィル
+  // 広がる条件: 背景色に近い かつ 輪郭（Sobel勾配）をまたがない
+  const COLOR_TOL = 35;
+  const EDGE_THRESH = 25;
+  const visited = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let qHead = 0, qTail = 0;
+  const enq = (x: number, y: number) => {
+    const idx = y * w + x;
+    if (visited[idx]) return;
+    visited[idx] = 1;
+    queue[qTail++] = idx;
+  };
+  enq(0, 0); enq(w-1, 0); enq(0, h-1); enq(w-1, h-1);
+  while (qHead < qTail) {
+    const idx = queue[qHead++];
+    const x = idx % w, y = (idx / w) | 0;
+    const pi = idx * 4;
+    d[pi] = REPL_R; d[pi+1] = REPL_G; d[pi+2] = REPL_B;
+    for (const [nx, ny] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1]] as [number,number][]) {
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+      const nIdx = ny * w + nx;
+      if (visited[nIdx]) continue;
+      const ni = nIdx * 4;
+      // 条件1: 背景色に近い
+      if (Math.abs(d[ni]-bgR)+Math.abs(d[ni+1]-bgG)+Math.abs(d[ni+2]-bgB) >= COLOR_TOL*3) continue;
+      // 条件2: 輪郭をまたがない
+      if (Math.max(grad[idx], grad[nIdx]) > EDGE_THRESH) continue;
+      enq(nx, ny);
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  const blob = await new Promise<Blob>(r => c.toBlob(b => r(b!), "image/png"));
+  return new File([blob], file.name, { type: "image/png" });
+}
+
 // ── Step2: ターゲット瓶を処理してリファレンス背景に合成 ──
 async function processImage(
   item: ImageItem,
@@ -147,13 +244,46 @@ async function processImage(
 ): Promise<string> {
   const { removeBackground } = await import("@imgly/background-removal");
 
-  const blob = await removeBackground(item.file);
+  // AIのアルファマスクを取得してオリジナルRGBと合成
+  // → AIが色を変えてしまう問題を回避し、元写真の色をそのまま使う
+  const aiInputFile = await preprocessForAI(item.file);
+  const extractedBlob = await removeBackground(aiInputFile);
+  const extractedBitmap = await createImageBitmap(extractedBlob);
+  const mW = extractedBitmap.width, mH = extractedBitmap.height;
+
+  const maskC = document.createElement("canvas");
+  maskC.width = mW; maskC.height = mH;
+  const maskCtx = maskC.getContext("2d")!;
+  maskCtx.drawImage(extractedBitmap, 0, 0);
+  const maskPx = maskCtx.getImageData(0, 0, mW, mH).data;
+
+  const origBitmap = await createImageBitmap(item.file);
+  const origC = document.createElement("canvas");
+  origC.width = mW; origC.height = mH;
+  const origCtx2 = origC.getContext("2d")!;
+  origCtx2.drawImage(origBitmap, 0, 0, mW, mH);
+  const origPx = origCtx2.getImageData(0, 0, mW, mH).data;
+
+  const combined = new ImageData(mW, mH);
+  const cd = combined.data;
+  for (let i = 0; i < origPx.length; i += 4) {
+    const a = maskPx[i + 3];
+    if (a === 0) { cd[i + 3] = 0; continue; }
+    const t = a / 255;
+    cd[i]     = Math.round(origPx[i]     * t + 255 * (1 - t));
+    cd[i + 1] = Math.round(origPx[i + 1] * t + 255 * (1 - t));
+    cd[i + 2] = Math.round(origPx[i + 2] * t + 255 * (1 - t));
+    cd[i + 3] = a > 20 ? 255 : 0;
+  }
+  origCtx2.putImageData(combined, 0, 0);
 
   const img = await new Promise<HTMLImageElement>((res, rej) => {
-    const i = new Image();
-    i.onload = () => res(i);
-    i.onerror = rej;
-    i.src = URL.createObjectURL(blob);
+    origC.toBlob(b => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = URL.createObjectURL(b!);
+    }, "image/png");
   });
 
   // バウンディングボックス検出
@@ -175,7 +305,6 @@ async function processImage(
   let destX: number, destY: number, scaledW: number, scaledH: number, seamY: number;
 
   if (refBg) {
-    // 参照瓶と同じ高さにスケール（step-by-step.htmlと同じ方式）
     const targetSeamY = refBg.seamY;
     const maxH = Math.min(refBg.refBottleH, OUTPUT_H * BOTTLE_MAX_H_RATIO);
     const maxW = OUTPUT_W * BOTTLE_MAX_W_RATIO;
@@ -206,7 +335,6 @@ async function processImage(
 
   // 背景を描く
   if (refBg) {
-    // リファレンス背景を使用
     const bgImg = await new Promise<HTMLImageElement>((res, rej) => {
       const i = new Image();
       i.onload = () => res(i);
@@ -215,7 +343,6 @@ async function processImage(
     });
     ctx.drawImage(bgImg, 0, 0, OUTPUT_W, OUTPUT_H);
   } else {
-    // フォールバック: canvas描画背景
     drawFallbackBackground(ctx, seamY);
   }
 
@@ -223,7 +350,6 @@ async function processImage(
   const shadowRX = scaledW * 0.28;
   const shadowRY = scaledH * 0.022;
   if (refBg) {
-    // 参照背景色ベースの影（step-by-step.html Step2方式）
     const [bgR, bgG, bgB] = refBg.bgColor;
     const shadowGrad = ctx.createRadialGradient(centerX, seamY, 0, centerX, seamY, shadowRX);
     shadowGrad.addColorStop(0, `rgba(${bgR * 0.3 | 0},${bgG * 0.3 | 0},${bgB * 0.3 | 0},0.55)`);
@@ -243,7 +369,6 @@ async function processImage(
     ctx.fillStyle = "rgba(0,0,0,0.75)";
     ctx.fill();
     ctx.restore();
-    // 投射影（右方向）
     const shX1 = destX + scaledW * 0.3;
     const shX2 = OUTPUT_W * 0.95;
     const shCX = (shX1 + shX2) / 2;
@@ -269,45 +394,8 @@ async function processImage(
   offscreen.height = OUTPUT_H;
   const offCtx = offscreen.getContext("2d")!;
   offCtx.drawImage(img, minX, minY, bw, bh, destX, destY, scaledW, scaledH);
-  ctx.drawImage(offscreen, 0, 0);
 
-  // ガラス暗化（ラベル下端をピクセル色で検出）
-  const offPixels = offCtx.getImageData(0, 0, OUTPUT_W, OUTPUT_H);
-  const pd = offPixels.data;
-  const scanCX = Math.round(destX + scaledW * 0.5);
-  const scanHalf = Math.round(scaledW * 0.25);
-  let labelBottomY = Math.round(destY);
-  for (let y = Math.round(destY); y < Math.round(seamY); y++) {
-    let whiteCount = 0, opaqueCount = 0;
-    for (let x = scanCX - scanHalf; x <= scanCX + scanHalf; x++) {
-      const i = (y * OUTPUT_W + x) * 4;
-      const a = pd[i + 3];
-      if (a > 50) {
-        opaqueCount++;
-        if (pd[i] > 200 && pd[i + 1] > 200 && pd[i + 2] > 200) whiteCount++;
-      }
-    }
-    if (opaqueCount > 0 && whiteCount / opaqueCount > 0.35) labelBottomY = y;
-  }
-  const labelDetected = labelBottomY > Math.round(destY) + Math.round(scaledH * 0.05);
-  const glassTop = labelBottomY + 8;
-  const glassH = seamY - glassTop + 20;
-  if (glassH > 0 && labelDetected) {
-    const glassLayer = document.createElement("canvas");
-    glassLayer.width = OUTPUT_W;
-    glassLayer.height = OUTPUT_H;
-    const glCtx = glassLayer.getContext("2d")!;
-    const darkGrad = glCtx.createLinearGradient(0, glassTop, 0, glassTop + glassH);
-    darkGrad.addColorStop(0,    "rgba(30,15,5,0)");
-    darkGrad.addColorStop(0.25, "rgba(30,15,5,0.30)");
-    darkGrad.addColorStop(0.55, "rgba(30,15,5,0.45)");
-    darkGrad.addColorStop(1.0,  "rgba(30,15,5,0.55)");
-    glCtx.fillStyle = darkGrad;
-    glCtx.fillRect(0, Math.floor(glassTop), OUTPUT_W, Math.ceil(glassH));
-    glCtx.globalCompositeOperation = "destination-in";
-    glCtx.drawImage(offscreen, 0, 0);
-    ctx.drawImage(glassLayer, 0, 0);
-  }
+  ctx.drawImage(offscreen, 0, 0);
 
   return new Promise((resolve) => {
     canvas.toBlob((b) => resolve(URL.createObjectURL(b!)), "image/png");
@@ -453,7 +541,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.25.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.32.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}

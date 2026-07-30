@@ -38,7 +38,7 @@ function getLatestResult() {
   const page = await browser.newPage();
 
   console.log('→ localhost:3000 を開いています...');
-  await page.goto(BASE_URL, { waitUntil: 'networkidle' });
+  await page.goto(BASE_URL, { waitUntil: 'load', timeout: 30000 });
 
   // バージョン番号を取得
   const version = await page.locator('text=/v\\d+\\.\\d+\\.\\d+/').first().textContent()
@@ -50,6 +50,7 @@ function getLatestResult() {
   console.log('→ 背景ロード待機中...');
   await page.waitForFunction(
     () => document.querySelector('main')?.dataset.bgReady === 'true',
+    null,
     { timeout: 180000 }
   );
   console.log('→ 背景ロード完了');
