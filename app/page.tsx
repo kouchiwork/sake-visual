@@ -257,6 +257,58 @@ async function processImage(
   maskCtx.drawImage(extractedBitmap, 0, 0);
   const maskPx = maskCtx.getImageData(0, 0, mW, mH).data;
 
+  // ===== 10x スケール マスクエロージョン（白縁除去） =====
+  // 10倍に拡大してエロージョンし、バイリニア縮小でアンチエイリアスをかける
+  const ERODE_SCALE = 10;
+  const ERODE_ITERS = 15; // 10x スケールで 15px ≈ 元スケールで 1.5px
+
+  const mW10 = mW * ERODE_SCALE;
+  const mH10 = mH * ERODE_SCALE;
+
+  const maskC10 = document.createElement("canvas");
+  maskC10.width = mW10;
+  maskC10.height = mH10;
+  const ctx10 = maskC10.getContext("2d")!;
+  ctx10.imageSmoothingEnabled = false;
+  ctx10.drawImage(maskC, 0, 0, mW10, mH10);
+  const rawMask10 = ctx10.getImageData(0, 0, mW10, mH10).data;
+
+  let alpha10 = new Uint8Array(mW10 * mH10);
+  for (let i = 3; i < rawMask10.length; i += 4) {
+    alpha10[i >> 2] = rawMask10[i] > 127 ? 1 : 0;
+  }
+
+  for (let iter = 0; iter < ERODE_ITERS; iter++) {
+    const next = new Uint8Array(mW10 * mH10);
+    for (let y = 1; y < mH10 - 1; y++) {
+      for (let x = 1; x < mW10 - 1; x++) {
+        const idx = y * mW10 + x;
+        if (alpha10[idx] &&
+            alpha10[idx - 1] && alpha10[idx + 1] &&
+            alpha10[idx - mW10] && alpha10[idx + mW10]) {
+          next[idx] = 1;
+        }
+      }
+    }
+    alpha10 = next;
+  }
+
+  const eroded10Data = ctx10.createImageData(mW10, mH10);
+  for (let i = 0; i < mW10 * mH10; i++) {
+    eroded10Data.data[i * 4 + 3] = alpha10[i] ? 255 : 0;
+  }
+  ctx10.putImageData(eroded10Data, 0, 0);
+
+  const erodedC = document.createElement("canvas");
+  erodedC.width = mW;
+  erodedC.height = mH;
+  const erodedCtx = erodedC.getContext("2d")!;
+  erodedCtx.imageSmoothingEnabled = true;
+  erodedCtx.imageSmoothingQuality = "high";
+  erodedCtx.drawImage(maskC10, 0, 0, mW, mH);
+  const erodedPx = erodedCtx.getImageData(0, 0, mW, mH).data;
+  // =====================================================
+
   const origBitmap = await createImageBitmap(item.file);
   const origC = document.createElement("canvas");
   origC.width = mW; origC.height = mH;
@@ -267,15 +319,13 @@ async function processImage(
   const combined = new ImageData(mW, mH);
   const cd = combined.data;
   for (let i = 0; i < origPx.length; i += 4) {
-    const a = maskPx[i + 3];
-    if (a <= 20) { cd[i + 3] = 0; continue; }
+    const a = erodedPx[i + 3];
+    if (a === 0) { cd[i + 3] = 0; continue; }
     const t = a / 255;
-    // defringe: 白背景が混入したエッジ色を逆算して除去
-    // origPx ≈ bottle * t + 255 * (1-t)  →  bottle = (origPx - 255*(1-t)) / t
     cd[i]     = Math.round(Math.max(0, Math.min(255, (origPx[i]     - 255 * (1 - t)) / t)));
     cd[i + 1] = Math.round(Math.max(0, Math.min(255, (origPx[i + 1] - 255 * (1 - t)) / t)));
     cd[i + 2] = Math.round(Math.max(0, Math.min(255, (origPx[i + 2] - 255 * (1 - t)) / t)));
-    cd[i + 3] = 255;
+    cd[i + 3] = a;
   }
   origCtx2.putImageData(combined, 0, 0);
 
@@ -547,7 +597,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.35.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.36.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}
