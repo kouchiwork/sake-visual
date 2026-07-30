@@ -156,7 +156,7 @@ async function preprocessForAI(file: File): Promise<File> {
   const bgR = ci.reduce((s,i) => s + d[i],   0) / 4;
   const bgG = ci.reduce((s,i) => s + d[i+1], 0) / 4;
   const bgB = ci.reduce((s,i) => s + d[i+2], 0) / 4;
-  if ((bgR + bgG + bgB) / 3 < 200) return file;
+  if ((bgR + bgG + bgB) / 3 < 240) return file; // 純白(>240)のみ前処理、グレー系はAI直通
 
   // Sobel勾配を計算（瓶の輪郭 = 高勾配 = フラッドフィルのバリア）
   const gray = new Float32Array(w * h);
@@ -608,7 +608,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.40.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.41.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}
