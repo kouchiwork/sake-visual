@@ -240,7 +240,8 @@ async function preprocessForAI(file: File): Promise<File> {
 // ── Step2: ターゲット瓶を処理してリファレンス背景に合成 ──
 async function processImage(
   item: ImageItem,
-  refBg: RefBackground | null
+  refBg: RefBackground | null,
+  opts: { dark: boolean; blue: boolean } = { dark: true, blue: true }
 ): Promise<string> {
   const { removeBackground } = await import("@imgly/background-removal");
 
@@ -395,13 +396,17 @@ async function processImage(
     });
     ctx.drawImage(bgImg, 0, 0, OUTPUT_W, OUTPUT_H);
     // ランダム濃淡（0〜10%）
-    const darkness = Math.random() * 0.10;
-    ctx.fillStyle = `rgba(0,0,0,${darkness})`;
-    ctx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
+    if (opts.dark) {
+      const darkness = Math.random() * 0.10;
+      ctx.fillStyle = `rgba(0,0,0,${darkness})`;
+      ctx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
+    }
     // ランダム青み（0〜5%）
-    const warmth = Math.random() * 0.05;
-    ctx.fillStyle = `rgba(60,120,255,${warmth})`;
-    ctx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
+    if (opts.blue) {
+      const blue = Math.random() * 0.05;
+      ctx.fillStyle = `rgba(60,120,255,${blue})`;
+      ctx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
+    }
   } else {
     drawFallbackBackground(ctx, seamY);
   }
@@ -489,6 +494,8 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [refBg, setRefBg] = useState<RefBackground | null>(null);
+  const [darkRandom, setDarkRandom] = useState(true);
+  const [blueRandom, setBlueRandom] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -564,7 +571,7 @@ export default function Home() {
         prev.map((i) => (i.id === item.id ? { ...i, status: "processing" } : i))
       );
       try {
-        const resultUrl = await processImage(item, refBg);
+        const resultUrl = await processImage(item, refBg, { dark: darkRandom, blue: blueRandom });
         setImages((prev) =>
           prev.map((i) =>
             i.id === item.id ? { ...i, status: "done", resultUrl } : i
@@ -601,7 +608,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.39.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.40.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}
@@ -624,6 +631,27 @@ export default function Home() {
           className="hidden"
           onChange={(e) => e.target.files && addFiles(Array.from(e.target.files))}
         />
+      </div>
+
+      <div className="flex gap-5 mb-4 text-sm text-gray-400 select-none">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={darkRandom}
+            onChange={(e) => setDarkRandom(e.target.checked)}
+            className="w-4 h-4 accent-amber-500"
+          />
+          濃淡ランダム
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={blueRandom}
+            onChange={(e) => setBlueRandom(e.target.checked)}
+            className="w-4 h-4 accent-blue-500"
+          />
+          青系ランダム
+        </label>
       </div>
 
       {images.length > 0 && (
