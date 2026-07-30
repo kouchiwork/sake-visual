@@ -156,8 +156,29 @@ async function preprocessForAI(file: File): Promise<File> {
   const bgR = ci.reduce((s,i) => s + d[i],   0) / 4;
   const bgG = ci.reduce((s,i) => s + d[i+1], 0) / 4;
   const bgB = ci.reduce((s,i) => s + d[i+2], 0) / 4;
-  if ((bgR + bgG + bgB) / 3 < 240) return file; // 純白(>240)のみ前処理、グレー系はAI直通
+  const avgBg = (bgR + bgG + bgB) / 3;
+  if (avgBg < 200) return file; // 暗い背景はスキップ
 
+  if (avgBg < 240) {
+    // グレー系背景（200〜240）: 彩度ベースのブライトニング
+    // 低彩度かつ背景色に近い画素を白に近づける → flood-fill漏れなし
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i+1], b = d[i+2];
+      const sat = Math.max(r, g, b) - Math.min(r, g, b);
+      const dist = Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB);
+      if (sat < 25 && dist < 75) {
+        const t = 0.8;
+        d[i]   = Math.round(r + (255 - r) * t);
+        d[i+1] = Math.round(g + (255 - g) * t);
+        d[i+2] = Math.round(b + (255 - b) * t);
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    const blob = await new Promise<Blob>(res => c.toBlob(b => res(b!), "image/png"));
+    return new File([blob], file.name, { type: "image/png" });
+  }
+
+  // 純白背景（>= 240）: Sobel + フラッドフィル（既存処理）
   // Sobel勾配を計算（瓶の輪郭 = 高勾配 = フラッドフィルのバリア）
   const gray = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) {
@@ -260,8 +281,9 @@ async function processImage(
 
   // ===== 10x スケール マスクエロージョン（白縁除去） =====
   // 10倍に拡大してエロージョンし、バイリニア縮小でアンチエイリアスをかける
-  const ERODE_SCALE = 10;
-  const ERODE_ITERS = 15; // 10x スケールで 15px ≈ 元スケールで 1.5px
+  // キャンバスサイズ上限(4096)を超えないようスケールを動的に決定
+  const ERODE_SCALE = Math.max(1, Math.min(10, Math.floor(4096 / Math.max(mW, mH))));
+  const ERODE_ITERS = Math.max(1, Math.round(1.5 * ERODE_SCALE)); // 有効エロージョン ≈ 1.5px
 
   const mW10 = mW * ERODE_SCALE;
   const mH10 = mH * ERODE_SCALE;
@@ -608,7 +630,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.41.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.42.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}
