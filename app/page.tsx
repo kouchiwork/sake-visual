@@ -262,7 +262,7 @@ async function preprocessForAI(file: File): Promise<File> {
 async function processImage(
   item: ImageItem,
   refBg: RefBackground | null,
-  opts: { dark: boolean; blue: boolean } = { dark: true, blue: true }
+  opts: { dark: boolean; blue: boolean; grad: boolean } = { dark: true, blue: true, grad: true }
 ): Promise<string> {
   const { removeBackground } = await import("@imgly/background-removal");
 
@@ -417,6 +417,14 @@ async function processImage(
       i.src = refBg.url;
     });
     ctx.drawImage(bgImg, 0, 0, OUTPUT_W, OUTPUT_H);
+    // グラデーション
+    if (opts.grad) {
+      const grad = ctx.createLinearGradient(0, 0, 0, OUTPUT_H);
+      grad.addColorStop(0, "rgba(0,0,0,0.08)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
+    }
     // ランダム濃淡（0〜10%）
     if (opts.dark) {
       const darkness = Math.random() * 0.10;
@@ -516,8 +524,9 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [refBg, setRefBg] = useState<RefBackground | null>(null);
-  const [darkRandom, setDarkRandom] = useState(true);
+  const [darkRandom, setDarkRandom] = useState(false);
   const [blueRandom, setBlueRandom] = useState(true);
+  const [gradEnabled, setGradEnabled] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -593,7 +602,7 @@ export default function Home() {
         prev.map((i) => (i.id === item.id ? { ...i, status: "processing" } : i))
       );
       try {
-        const resultUrl = await processImage(item, refBg, { dark: darkRandom, blue: blueRandom });
+        const resultUrl = await processImage(item, refBg, { dark: darkRandom, blue: blueRandom, grad: gradEnabled });
         setImages((prev) =>
           prev.map((i) =>
             i.id === item.id ? { ...i, status: "done", resultUrl } : i
@@ -673,6 +682,15 @@ export default function Home() {
             className="w-4 h-4 accent-blue-500"
           />
           青系ランダム
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={gradEnabled}
+            onChange={(e) => setGradEnabled(e.target.checked)}
+            className="w-4 h-4 accent-gray-400"
+          />
+          グラデ
         </label>
       </div>
 

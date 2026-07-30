@@ -61,6 +61,15 @@ function getLatestResult() {
   await fileInput.setInputFiles(TEST_BOTTLE);
   await page.waitForTimeout(500);
 
+  // 濃淡・青系チェックボックスをOFFに（引数で制御）
+  const darkOff = process.argv.includes('--no-dark');
+  const blueOff = process.argv.includes('--no-blue');
+  if (darkOff || blueOff) {
+    const checkboxes = await page.locator('input[type="checkbox"]').all();
+    if (darkOff && checkboxes[0]) await checkboxes[0].uncheck();
+    if (blueOff && checkboxes[1]) await checkboxes[1].uncheck();
+  }
+
   // 変換開始ボタンをクリック
   const startBtn = page.locator('button', { hasText: '変換開始' });
   await startBtn.click();
