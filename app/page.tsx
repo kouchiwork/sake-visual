@@ -342,6 +342,10 @@ async function processImage(
       i.src = refBg.url;
     });
     ctx.drawImage(bgImg, 0, 0, OUTPUT_W, OUTPUT_H);
+    // ランダム濃淡（0〜5%）
+    const darkness = Math.random() * 0.05;
+    ctx.fillStyle = `rgba(0,0,0,${darkness})`;
+    ctx.fillRect(0, 0, OUTPUT_W, OUTPUT_H);
   } else {
     drawFallbackBackground(ctx, seamY);
   }
@@ -541,7 +545,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.32.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.33.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}
