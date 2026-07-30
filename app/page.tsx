@@ -209,8 +209,8 @@ async function preprocessForAI(file: File): Promise<File> {
   let bestColor = CANDIDATES[0], bestMinDist = -1;
   for (const [cr, cg, cb] of CANDIDATES) {
     let minDist = Infinity;
-    for (let y = (h*0.25)|0; y < (h*0.75)|0; y += STEP) {
-      for (let x = (w*0.25)|0; x < (w*0.75)|0; x += STEP) {
+    for (let y = Math.floor(h*0.25); y < Math.floor(h*0.75); y += STEP) {
+      for (let x = Math.floor(w*0.25); x < Math.floor(w*0.75); x += STEP) {
         const i = (y * w + x) * 4;
         const dr = d[i]-cr, dg = d[i+1]-cg, db = d[i+2]-cb;
         const dist = dr*dr + dg*dg + db*db;
