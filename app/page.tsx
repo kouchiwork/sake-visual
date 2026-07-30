@@ -268,12 +268,14 @@ async function processImage(
   const cd = combined.data;
   for (let i = 0; i < origPx.length; i += 4) {
     const a = maskPx[i + 3];
-    if (a === 0) { cd[i + 3] = 0; continue; }
+    if (a <= 20) { cd[i + 3] = 0; continue; }
     const t = a / 255;
-    cd[i]     = Math.round(origPx[i]     * t + 255 * (1 - t));
-    cd[i + 1] = Math.round(origPx[i + 1] * t + 255 * (1 - t));
-    cd[i + 2] = Math.round(origPx[i + 2] * t + 255 * (1 - t));
-    cd[i + 3] = a > 20 ? 255 : 0;
+    // defringe: 白背景が混入したエッジ色を逆算して除去
+    // origPx ≈ bottle * t + 255 * (1-t)  →  bottle = (origPx - 255*(1-t)) / t
+    cd[i]     = Math.round(Math.max(0, Math.min(255, (origPx[i]     - 255 * (1 - t)) / t)));
+    cd[i + 1] = Math.round(Math.max(0, Math.min(255, (origPx[i + 1] - 255 * (1 - t)) / t)));
+    cd[i + 2] = Math.round(Math.max(0, Math.min(255, (origPx[i + 2] - 255 * (1 - t)) / t)));
+    cd[i + 3] = 255;
   }
   origCtx2.putImageData(combined, 0, 0);
 
@@ -545,7 +547,7 @@ export default function Home() {
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold tracking-widest mb-2">SakeLens</h1>
         <p className="text-gray-400 text-sm">日本酒ボトルをスタジオ撮影風に自動変換</p>
-        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.34.0</p>
+        <p className="text-xs text-gray-600 mt-1">出力: {OUTPUT_W}×{OUTPUT_H}px 固定　v1.35.0</p>
       </div>
 
       {/* ターゲット画像ドロップゾーン */}
